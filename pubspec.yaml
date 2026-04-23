@@ -1,0 +1,49 @@
+name: pos_app
+description: "Illume POS — Premium School Uniform Retail System"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.5.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # State Management
+  flutter_riverpod: ^2.5.1
+
+  # Navigation
+  go_router: ^14.2.7
+
+  # Networking
+  dio: ^5.7.0
+
+  # Local Storage
+  shared_preferences: ^2.3.2
+
+  # UI
+  cached_network_image: ^3.3.1
+  google_fonts: ^6.2.1
+  qr_flutter: ^4.1.0
+
+  # Barcode
+  mobile_scanner: ^5.2.3
+
+  # Utilities
+  uuid: ^4.4.2
+  intl: ^0.19.0
+  connectivity_plus: ^6.0.5
+  path_provider: ^2.1.4
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/
+    - assets/icons/
