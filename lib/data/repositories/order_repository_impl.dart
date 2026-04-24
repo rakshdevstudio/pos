@@ -36,6 +36,33 @@ class OrderRepositoryImpl implements OrderRepository {
     return _db.getPendingOrdersCount();
   }
 
+  @override
+  Future<void> applyInventoryMovements({
+    required List<CartItem> items,
+    required String branchId,
+  }) async {
+    final quantitiesByVariant = <String, int>{};
+    for (final item in items) {
+      quantitiesByVariant.update(
+        item.variant.id,
+        (quantity) => quantity + item.quantity,
+        ifAbsent: () => item.quantity,
+      );
+    }
+
+    for (final entry in quantitiesByVariant.entries) {
+      await _apiClient.dio.post(
+        '${_supabaseBaseUrl()}/rest/v1/rpc/apply_inventory_movement',
+        data: {
+          'variant_id': entry.key,
+          'branch_id': branchId,
+          'delta': -entry.value,
+          'reason': 'pos_order',
+        },
+      );
+    }
+  }
+
   // ── Remote sync ───────────────────────────────────────────────────────────
 
   @override
@@ -92,12 +119,13 @@ class OrderRepositoryImpl implements OrderRepository {
   // ── Helpers ───────────────────────────────────────────────────────────────
 
   Order _rowToOrder(Map<String, dynamic> row) {
-    final customerMap = jsonDecode(row['customer_json'] as String) as Map<String, dynamic>;
+    final customerMap =
+        jsonDecode(row['customer_json'] as String) as Map<String, dynamic>;
 
     return Order(
       offlineId: row['offline_id'] as String,
       customer: CustomerInfo.fromJson(customerMap),
-      schoolId: row['school_id'] as int,
+      schoolId: row['school_id'].toString(),
       items: const [], // items are only needed for serialization; sync uses toJson()
       subtotal: (row['subtotal'] as num).toDouble(),
       discountAmount: (row['discount_amount'] as num).toDouble(),
@@ -127,5 +155,9 @@ class OrderRepositoryImpl implements OrderRepository {
       'created_at': row['created_at'],
       'schema_version': row['schema_version'] ?? 1,
     };
+  }
+
+  String _supabaseBaseUrl() {
+    return ApiClient.baseUrl.replaceFirst(RegExp(r'/api/v\d+/?$'), '');
   }
 }

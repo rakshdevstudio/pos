@@ -14,8 +14,7 @@ class CartState {
     this.discountValue = 0,
   });
 
-  double get subtotal =>
-      items.fold(0, (sum, item) => sum + item.lineTotal);
+  double get subtotal => items.fold(0, (sum, item) => sum + item.lineTotal);
 
   double get total => (subtotal - discountAmount).clamp(0, double.infinity);
 
@@ -58,17 +57,24 @@ class CartNotifier extends StateNotifier<CartState> {
     _history.clear();
   }
 
-  void addItem(Product product, Variant variant) {
+  bool addItem(Product product, Variant variant) {
+    if (variant.stock <= 0) return false;
+
     // we don't save history on single add, only destructive ops
-    final existing = state.items.where((i) => i.key == '${product.id}_${variant.id}');
+    final existing =
+        state.items.where((i) => i.key == '${product.id}_${variant.id}');
 
     if (existing.isNotEmpty) {
+      var changed = false;
       final updated = state.items.map((i) {
         if (i.key == '${product.id}_${variant.id}') {
+          if (i.quantity >= variant.stock) return i;
+          changed = true;
           return i.copyWith(quantity: i.quantity + 1);
         }
         return i;
       }).toList();
+      if (!changed) return false;
       state = state.copyWith(items: updated);
     } else {
       state = state.copyWith(
@@ -76,6 +82,7 @@ class CartNotifier extends StateNotifier<CartState> {
       );
     }
     _recalcDiscount();
+    return true;
   }
 
   void removeItem(String key) {
@@ -86,13 +93,22 @@ class CartNotifier extends StateNotifier<CartState> {
     _recalcDiscount();
   }
 
-  void incrementQuantity(String key) {
+  bool incrementQuantity(String key) {
+    var changed = false;
     final updated = state.items.map((i) {
-      if (i.key == key) return i.copyWith(quantity: i.quantity + 1);
+      if (i.key == key) {
+        if (i.quantity >= i.variant.stock) {
+          return i;
+        }
+        changed = true;
+        return i.copyWith(quantity: i.quantity + 1);
+      }
       return i;
     }).toList();
+    if (!changed) return false;
     state = state.copyWith(items: updated);
     _recalcDiscount();
+    return true;
   }
 
   void decrementQuantity(String key) {
@@ -121,7 +137,10 @@ class CartNotifier extends StateNotifier<CartState> {
       return;
     }
     final updated = state.items.map((i) {
-      if (i.key == key) return i.copyWith(quantity: quantity);
+      if (i.key == key) {
+        final safeQuantity = quantity.clamp(1, i.variant.stock);
+        return i.copyWith(quantity: safeQuantity);
+      }
       return i;
     }).toList();
     state = state.copyWith(items: updated);

@@ -9,7 +9,7 @@ enum OrderSyncStatus { pending, synced, failed }
 class Order {
   final String offlineId;
   final CustomerInfo customer;
-  final int schoolId;
+  final String schoolId;
   final List<CartItem> items;
   final double subtotal;
   final double discountAmount;

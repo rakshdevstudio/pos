@@ -22,15 +22,12 @@ final orderRepoProvider = Provider<OrderRepositoryImpl>((ref) {
 
 /// Product repository — singleton preserves in-memory SKU index.
 final productRepoProvider = Provider<ProductRepositoryImpl>((ref) {
-  return ProductRepositoryImpl(
-    ref.read(apiClientProvider),
-    ref.read(dbProvider),
-  );
+  return ProductRepositoryImpl();
 });
 
 /// School repository.
 final schoolRepoProvider = Provider<SchoolRepositoryImpl>((ref) {
-  return SchoolRepositoryImpl(ref.read(apiClientProvider));
+  return SchoolRepositoryImpl();
 });
 
 /// Customer repository.

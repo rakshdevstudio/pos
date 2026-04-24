@@ -13,9 +13,8 @@ import 'cart_panel.dart';
 import 'product_card.dart';
 
 final _productsProvider =
-    FutureProvider.family<List<Product>, int>((ref, schoolId) async {
+    FutureProvider.family<List<Product>, String>((ref, schoolId) async {
   final repo = ref.read(productRepoProvider);
-  await repo.loadCache(schoolId);
   return repo.getProducts(schoolId);
 });
 
@@ -33,7 +32,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   final _searchController = TextEditingController();
   final _barcodeController = TextEditingController();
   final _barcodeFocus = FocusNode();
-  int? _schoolId;
+  String? _schoolId;
   String? _schoolName;
 
   String? _lastCode;
@@ -59,16 +58,26 @@ class _PosScreenState extends ConsumerState<PosScreen> {
 
   Future<void> _loadSchool() async {
     final prefs = await SharedPreferences.getInstance();
-    final id = prefs.getInt('selected_school_id');
-    final name = prefs.getString('selected_school_name') ?? 'Store';
+    final id = _productSchoolIdFromPrefs(prefs);
+    if (id == null) {
+      if (mounted) context.go('/schools');
+      return;
+    }
+
+    final name = prefs.getString('selectedSchoolName') ??
+        prefs.getString('selected_school_name') ??
+        'Store';
     setState(() {
       _schoolId = id;
       _schoolName = name;
     });
-    if (id != null) {
-      final repo = ref.read(productRepoProvider);
-      await repo.loadCache(id);
-    }
+  }
+
+  String? _productSchoolIdFromPrefs(SharedPreferences prefs) {
+    final legacySchoolId = prefs.get('selected_school_id');
+    final selectedSchoolId = prefs.getString('selectedSchoolId') ??
+        (legacySchoolId is String ? legacySchoolId : null);
+    return selectedSchoolId?.isNotEmpty == true ? selectedSchoolId : null;
   }
 
   void _handleBarcodeSubmit(String sku) {
@@ -94,12 +103,29 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     } else {
       // Find parent product
       if (_schoolId != null) {
-        final products = ref.read(productRepoProvider).getCachedProducts(_schoolId!);
+        final products =
+            ref.read(productRepoProvider).getCachedProducts(_schoolId!);
+        if (products.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Products are still loading')),
+          );
+          _barcodeController.clear();
+          _barcodeFocus.requestFocus();
+          return;
+        }
         final product = products.firstWhere(
           (p) => p.variants.any((v) => v.id == variant.id),
           orElse: () => products.first,
         );
-        ref.read(cartProvider.notifier).addItem(product, variant);
+        final added = ref.read(cartProvider.notifier).addItem(product, variant);
+        if (!added) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Out of stock')),
+          );
+          _barcodeController.clear();
+          _barcodeFocus.requestFocus();
+          return;
+        }
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Row(
@@ -144,7 +170,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
 
   Widget _buildPosLayout() {
     final width = MediaQuery.of(context).size.width;
-    
+
     final productsPanel = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -162,10 +188,11 @@ class _PosScreenState extends ConsumerState<PosScreen> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           const SizedBox(
-            width: 320, 
+            width: 320,
             child: CartPanel(),
           ),
-          const VerticalDivider(width: 1, thickness: 1, color: AppColors.border),
+          const VerticalDivider(
+              width: 1, thickness: 1, color: AppColors.border),
           Expanded(
             child: productsPanel,
           ),
@@ -196,21 +223,30 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       padding: const EdgeInsets.symmetric(horizontal: AppDimens.spacingXXL),
       child: Row(
         children: [
-          Text(
-            _schoolName ?? 'Store',
-            style: AppTypography.titleLarge.copyWith(
-              color: AppColors.textPrimary,
+          Expanded(
+            child: Row(
+              children: [
+                Flexible(
+                  child: Text(
+                    _schoolName ?? 'Store',
+                    style: AppTypography.titleLarge.copyWith(
+                      color: AppColors.textPrimary,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: AppDimens.spacingXS),
+                Text(
+                  '· POS',
+                  style: AppTypography.headlineSmall.copyWith(
+                    color: AppColors.textMuted,
+                    fontWeight: FontWeight.w300,
+                  ),
+                ),
+              ],
             ),
           ),
-          const SizedBox(width: AppDimens.spacingXS),
-          Text(
-            '· POS',
-            style: AppTypography.headlineSmall.copyWith(
-              color: AppColors.textMuted,
-              fontWeight: FontWeight.w300,
-            ),
-          ),
-          const Spacer(),
+          const SizedBox(width: AppDimens.spacingMD),
           const SyncStatusBadge(),
           const SizedBox(width: AppDimens.spacingMD),
           _ProfileMenu(),
@@ -246,8 +282,8 @@ class _PosScreenState extends ConsumerState<PosScreen> {
             child: TextField(
               controller: _barcodeController,
               focusNode: _barcodeFocus,
-              style: AppTypography.bodyLarge.copyWith(
-                  color: AppColors.textPrimary),
+              style: AppTypography.bodyLarge
+                  .copyWith(color: AppColors.textPrimary),
               cursorColor: AppColors.accent,
               textInputAction: TextInputAction.done,
               onSubmitted: _handleBarcodeSubmit,
@@ -257,8 +293,8 @@ class _PosScreenState extends ConsumerState<PosScreen> {
                   color: AppColors.textMuted,
                 ),
                 prefixIcon: const Padding(
-                  padding: EdgeInsets.symmetric(
-                      horizontal: AppDimens.spacingLG),
+                  padding:
+                      EdgeInsets.symmetric(horizontal: AppDimens.spacingLG),
                   child: Icon(
                     Icons.qr_code_scanner_rounded,
                     size: 18,
@@ -303,14 +339,16 @@ class _PosScreenState extends ConsumerState<PosScreen> {
             .whereType<String>()
             .toSet()
             .toList();
-        if (categories.isEmpty) return const SizedBox(height: AppDimens.spacingSM);
+        if (categories.isEmpty) {
+          return const SizedBox(height: AppDimens.spacingSM);
+        }
         final selectedCat = ref.watch(_selectedCategoryProvider);
         return SizedBox(
           height: 44,
           child: ListView(
             scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(
-                horizontal: AppDimens.spacingXXL),
+            padding:
+                const EdgeInsets.symmetric(horizontal: AppDimens.spacingXXL),
             children: [
               _CategoryChip(
                 label: 'All',
@@ -349,8 +387,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
               .toList();
         }
         if (selectedCat != null) {
-          filtered =
-              filtered.where((p) => p.category == selectedCat).toList();
+          filtered = filtered.where((p) => p.category == selectedCat).toList();
         }
 
         if (filtered.isEmpty) {
@@ -362,7 +399,9 @@ class _PosScreenState extends ConsumerState<PosScreen> {
                     color: AppColors.textDisabled, size: 40),
                 const SizedBox(height: AppDimens.spacingMD),
                 Text(
-                  'No products found',
+                  searchQuery.isEmpty && selectedCat == null
+                      ? 'No products available'
+                      : 'No products found',
                   style: AppTypography.bodyMedium.copyWith(
                     color: AppColors.textMuted,
                   ),
@@ -378,7 +417,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
             maxCrossAxisExtent: AppDimens.productCardWidth + 20,
             crossAxisSpacing: AppDimens.spacingMD,
             mainAxisSpacing: AppDimens.spacingMD,
-            childAspectRatio: 0.8,
+            childAspectRatio: 0.72,
           ),
           itemCount: filtered.length,
           itemBuilder: (context, index) {
@@ -387,15 +426,27 @@ class _PosScreenState extends ConsumerState<PosScreen> {
               product: product,
               onTap: () {
                 if (product.variants.length == 1) {
+                  final variant = product.variants.first;
+                  if (variant.stock <= 0) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Out of stock')),
+                    );
+                    return;
+                  }
                   HapticFeedback.lightImpact();
-                  ref.read(cartProvider.notifier).addItem(product, product.variants.first);
+                  final added =
+                      ref.read(cartProvider.notifier).addItem(product, variant);
+                  if (!added) return;
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
                       content: Row(
                         children: [
-                          const Icon(Icons.check_circle_rounded, color: AppColors.success, size: 16),
+                          const Icon(Icons.check_circle_rounded,
+                              color: AppColors.success, size: 16),
                           const SizedBox(width: AppDimens.spacingSM),
-                          Text('${product.name} added', style: AppTypography.bodySmall.copyWith(color: AppColors.textPrimary)),
+                          Text('${product.name} added',
+                              style: AppTypography.bodySmall
+                                  .copyWith(color: AppColors.textPrimary)),
                         ],
                       ),
                       duration: const Duration(seconds: 1),
@@ -448,8 +499,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
             ),
             const SizedBox(height: AppDimens.spacingMD),
             TextButton(
-              onPressed: () =>
-                  ref.refresh(_productsProvider(_schoolId!)),
+              onPressed: () => ref.invalidate(_productsProvider(_schoolId!)),
               child: const Text('Retry',
                   style: TextStyle(color: AppColors.accent)),
             ),
@@ -479,8 +529,8 @@ class _SearchField extends StatelessWidget {
             AppTypography.bodyMedium.copyWith(color: AppColors.textMuted),
         prefixIcon: const Padding(
           padding: EdgeInsets.symmetric(horizontal: AppDimens.spacingLG),
-          child: Icon(Icons.search_rounded,
-              size: 20, color: AppColors.textMuted),
+          child:
+              Icon(Icons.search_rounded, size: 20, color: AppColors.textMuted),
         ),
         prefixIconConstraints: const BoxConstraints(),
         suffixIcon: controller.text.isNotEmpty
@@ -590,8 +640,8 @@ class _ProfileMenu extends ConsumerWidget {
               const SizedBox(width: AppDimens.spacingSM),
               Text(
                 'Switch School',
-                style: AppTypography.bodyMedium.copyWith(
-                    color: AppColors.textPrimary),
+                style: AppTypography.bodyMedium
+                    .copyWith(color: AppColors.textPrimary),
               ),
             ],
           ),
@@ -605,8 +655,8 @@ class _ProfileMenu extends ConsumerWidget {
               const SizedBox(width: AppDimens.spacingSM),
               Text(
                 'Sign Out',
-                style: AppTypography.bodyMedium
-                    .copyWith(color: AppColors.error),
+                style:
+                    AppTypography.bodyMedium.copyWith(color: AppColors.error),
               ),
             ],
           ),

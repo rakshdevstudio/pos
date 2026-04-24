@@ -64,12 +64,15 @@ class _CheckoutSheetState extends ConsumerState<CheckoutSheet> {
     }
 
     if (payment == PaymentMethod.upi) {
-      Navigator.push(
+      final paid = await Navigator.push<bool>(
         context,
         MaterialPageRoute(
           builder: (_) => UpiScreen(total: cart.total),
         ),
-      ).then((_) => _finalizeOrder());
+      );
+      if (paid == true) {
+        await _finalizeOrder();
+      }
       return;
     }
 
@@ -79,7 +82,20 @@ class _CheckoutSheetState extends ConsumerState<CheckoutSheet> {
   Future<void> _finalizeOrder({double? tenderedAmount}) async {
     final cart = ref.read(cartProvider);
     final payment = ref.read(_selectedPaymentProvider) ?? PaymentMethod.cash;
-    
+
+    final stockIssue = cart.items.where((item) =>
+        item.variant.stock <= 0 || item.quantity > item.variant.stock);
+    if (stockIssue.isNotEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Out of stock for one or more items'),
+          backgroundColor: AppColors.errorDim,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
     if (tenderedAmount != null && tenderedAmount < cart.total) {
       HapticFeedback.heavyImpact();
       ScaffoldMessenger.of(context).showSnackBar(
@@ -98,7 +114,17 @@ class _CheckoutSheetState extends ConsumerState<CheckoutSheet> {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('last_payment_method', payment.name);
-      final schoolId = prefs.getInt('selected_school_id') ?? 0;
+      final legacySchoolId = prefs.get('selected_school_id');
+      final legacyBranchId = prefs.get('selected_branch_id');
+      final schoolId = prefs.getString('selectedSchoolId') ??
+          (legacySchoolId is String ? legacySchoolId : null) ??
+          '';
+      final branchId = prefs.getString('selectedBranchId') ??
+          (legacyBranchId is String ? legacyBranchId : null) ??
+          '';
+      if (schoolId.isEmpty || branchId.isEmpty) {
+        throw StateError('School selection is missing');
+      }
 
       final order = Order(
         offlineId: const Uuid().v4(),
@@ -114,6 +140,10 @@ class _CheckoutSheetState extends ConsumerState<CheckoutSheet> {
 
       // Use provider singleton — no direct instantiation
       final repo = ref.read(orderRepoProvider);
+      await repo.applyInventoryMovements(
+        items: cart.items,
+        branchId: branchId,
+      );
       final newCount = await repo.saveOrderLocally(order);
       ref.read(pendingOrdersCountProvider.notifier).setCount(newCount);
 
@@ -124,7 +154,17 @@ class _CheckoutSheetState extends ConsumerState<CheckoutSheet> {
       HapticFeedback.heavyImpact();
 
       if (mounted) {
-        _showSuccessSheet(tenderedAmount: tenderedAmount);
+        _showSuccessSheet(total: cart.total, tenderedAmount: tenderedAmount);
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not update stock. Order was not placed.'),
+            backgroundColor: AppColors.errorDim,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
       }
     } finally {
       if (mounted) {
@@ -133,13 +173,13 @@ class _CheckoutSheetState extends ConsumerState<CheckoutSheet> {
     }
   }
 
-  void _showSuccessSheet({double? tenderedAmount}) {
+  void _showSuccessSheet({required double total, double? tenderedAmount}) {
     showModalBottomSheet(
       context: context,
       isDismissible: false,
       backgroundColor: Colors.transparent,
       builder: (_) => _OrderSuccessSheet(
-        total: ref.read(cartProvider).total,
+        total: total,
         tendered: tenderedAmount,
         onNewOrder: () {
           Navigator.of(context).popUntil((r) => r.isFirst);
@@ -168,7 +208,8 @@ class _CheckoutSheetState extends ConsumerState<CheckoutSheet> {
     return Container(
       decoration: const BoxDecoration(
         color: AppColors.background,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(AppDimens.radiusXXL)),
+        borderRadius:
+            BorderRadius.vertical(top: Radius.circular(AppDimens.radiusXXL)),
       ),
       padding: EdgeInsets.fromLTRB(
         AppDimens.spacingXXL,
@@ -188,7 +229,9 @@ class _CheckoutSheetState extends ConsumerState<CheckoutSheet> {
           _buildPaymentSection(selectedPayment),
           const SizedBox(height: AppDimens.spacing3XL),
           IllumeButton(
-            label: selectedPayment == PaymentMethod.cash ? 'COMPLETE PAYMENT' : 'CONFIRM PAYMENT',
+            label: selectedPayment == PaymentMethod.cash
+                ? 'COMPLETE PAYMENT'
+                : 'CONFIRM PAYMENT',
             onPressed: selectedPayment == null ? null : _placeOrder,
             isLoading: isPlacing,
             icon: Icons.check_rounded,
@@ -202,7 +245,9 @@ class _CheckoutSheetState extends ConsumerState<CheckoutSheet> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('BILL SUMMARY', style: AppTypography.titleLarge.copyWith(color: AppColors.textSecondary, letterSpacing: 2)),
+        Text('BILL SUMMARY',
+            style: AppTypography.titleLarge
+                .copyWith(color: AppColors.textSecondary, letterSpacing: 2)),
         const SizedBox(height: AppDimens.spacingMD),
         Container(
           constraints: const BoxConstraints(maxHeight: 200),
@@ -214,7 +259,8 @@ class _CheckoutSheetState extends ConsumerState<CheckoutSheet> {
           child: ListView.separated(
             shrinkWrap: true,
             itemCount: cart.items.length,
-            separatorBuilder: (_, __) => const Divider(height: 1, color: AppColors.border),
+            separatorBuilder: (_, __) =>
+                const Divider(height: 1, color: AppColors.border),
             itemBuilder: (_, i) {
               final item = cart.items[i];
               return ListTile(
@@ -243,7 +289,8 @@ class _CheckoutSheetState extends ConsumerState<CheckoutSheet> {
               fillColor: AppColors.surface,
             ),
             onChanged: (val) {
-              ref.read(_discountValueProvider.notifier).state = double.tryParse(val) ?? 0;
+              ref.read(_discountValueProvider.notifier).state =
+                  double.tryParse(val) ?? 0;
             },
           ),
         ),
@@ -256,7 +303,9 @@ class _CheckoutSheetState extends ConsumerState<CheckoutSheet> {
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         Text('TOTAL', style: AppTypography.titleLarge),
-        Text('₹${_currencyFmt.format(cart.total)}', style: AppTypography.headlineMedium.copyWith(color: AppColors.accent)),
+        Text('₹${_currencyFmt.format(cart.total)}',
+            style:
+                AppTypography.headlineMedium.copyWith(color: AppColors.accent)),
       ],
     );
   }
@@ -264,11 +313,14 @@ class _CheckoutSheetState extends ConsumerState<CheckoutSheet> {
   Widget _buildPaymentSection(PaymentMethod? selected) {
     return Wrap(
       spacing: 8,
-      children: PaymentMethod.values.map((m) => ChoiceChip(
-        label: Text(m.name.toUpperCase()),
-        selected: selected == m,
-        onSelected: (_) => ref.read(_selectedPaymentProvider.notifier).state = m,
-      )).toList(),
+      children: PaymentMethod.values
+          .map((m) => ChoiceChip(
+                label: Text(m.name.toUpperCase()),
+                selected: selected == m,
+                onSelected: (_) =>
+                    ref.read(_selectedPaymentProvider.notifier).state = m,
+              ))
+          .toList(),
     );
   }
 }
@@ -279,24 +331,32 @@ class _OrderSuccessSheet extends StatelessWidget {
   final VoidCallback onNewOrder;
   final VoidCallback onPrint;
 
-  const _OrderSuccessSheet({required this.total, this.tendered, required this.onNewOrder, required this.onPrint});
+  const _OrderSuccessSheet(
+      {required this.total,
+      this.tendered,
+      required this.onNewOrder,
+      required this.onPrint});
 
   @override
   Widget build(BuildContext context) {
     return Container(
       decoration: const BoxDecoration(
         color: AppColors.surface,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(AppDimens.radiusXXL)),
+        borderRadius:
+            BorderRadius.vertical(top: Radius.circular(AppDimens.radiusXXL)),
       ),
-      padding: EdgeInsets.all(AppDimens.spacingXXL),
+      padding: const EdgeInsets.all(AppDimens.spacingXXL),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           const Icon(Icons.check_circle, color: AppColors.success, size: 64),
           const SizedBox(height: AppDimens.spacingLG),
-          Text('PAID ₹${_currencyFmt.format(total)}', style: AppTypography.headlineMedium),
+          Text('PAID ₹${_currencyFmt.format(total)}',
+              style: AppTypography.headlineMedium),
           if (tendered != null && tendered! > total)
-            Text('RETURN CHANGE: ₹${_currencyFmt.format(tendered! - total)}', style: AppTypography.titleLarge.copyWith(color: AppColors.accent)),
+            Text('RETURN CHANGE: ₹${_currencyFmt.format(tendered! - total)}',
+                style:
+                    AppTypography.titleLarge.copyWith(color: AppColors.accent)),
           const SizedBox(height: AppDimens.spacingXL),
           IllumeButton(label: 'NEW ORDER', onPressed: onNewOrder),
         ],

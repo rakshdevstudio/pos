@@ -4,15 +4,12 @@ import 'package:go_router/go_router.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/constants/constants.dart';
-import '../../data/remote/api_client.dart';
-import '../../data/repositories/school_repository_impl.dart';
+import '../../core/providers/providers.dart';
 import '../../domain/models/models.dart';
 import '../shared/widgets/sync_status_badge.dart';
 
 final _schoolsProvider = FutureProvider<List<School>>((ref) async {
-  final repo = SchoolRepositoryImpl(ApiClient());
-  await repo.loadCache();
-  return repo.getSchools();
+  return ref.read(schoolRepoProvider).fetchSchools();
 });
 
 final _selectedSchoolProvider = StateProvider<School?>((ref) => null);
@@ -108,22 +105,17 @@ class SchoolSelectionScreen extends ConsumerWidget {
                     filled: true,
                     fillColor: AppColors.surface,
                     border: OutlineInputBorder(
-                      borderRadius:
-                          BorderRadius.circular(AppDimens.radiusMD),
-                      borderSide:
-                          const BorderSide(color: AppColors.border),
+                      borderRadius: BorderRadius.circular(AppDimens.radiusMD),
+                      borderSide: const BorderSide(color: AppColors.border),
                     ),
                     enabledBorder: OutlineInputBorder(
-                      borderRadius:
-                          BorderRadius.circular(AppDimens.radiusMD),
-                      borderSide:
-                          const BorderSide(color: AppColors.border),
+                      borderRadius: BorderRadius.circular(AppDimens.radiusMD),
+                      borderSide: const BorderSide(color: AppColors.border),
                     ),
                     focusedBorder: OutlineInputBorder(
-                      borderRadius:
-                          BorderRadius.circular(AppDimens.radiusMD),
-                      borderSide: const BorderSide(
-                          color: AppColors.accent, width: 1.5),
+                      borderRadius: BorderRadius.circular(AppDimens.radiusMD),
+                      borderSide:
+                          const BorderSide(color: AppColors.accent, width: 1.5),
                     ),
                     contentPadding: const EdgeInsets.symmetric(
                       horizontal: AppDimens.spacingLG,
@@ -176,8 +168,7 @@ class SchoolSelectionScreen extends ConsumerWidget {
                     AppDimens.spacing3XL,
                     AppDimens.spacing3XL,
                   ),
-                  gridDelegate:
-                      const SliverGridDelegateWithMaxCrossAxisExtent(
+                  gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
                     maxCrossAxisExtent: 280,
                     crossAxisSpacing: AppDimens.spacingLG,
                     mainAxisSpacing: AppDimens.spacingLG,
@@ -194,10 +185,14 @@ class SchoolSelectionScreen extends ConsumerWidget {
                         ref.read(_selectedSchoolProvider.notifier).state =
                             school;
                         // Persist selection
-                        final prefs =
-                            await SharedPreferences.getInstance();
-                        await prefs.setInt(
-                            'selected_school_id', school.id);
+                        final prefs = await SharedPreferences.getInstance();
+                        final branchId = school.branchId ?? '';
+                        await prefs.setString('selectedSchoolId', school.id);
+                        await prefs.setString('selectedBranchId', branchId);
+                        await prefs.setString('selected_school_id', school.id);
+                        await prefs.setString('selected_branch_id', branchId);
+                        await prefs.setString(
+                            'selectedSchoolName', school.name);
                         await prefs.setString(
                             'selected_school_name', school.name);
                         if (context.mounted) {
@@ -218,13 +213,22 @@ class SchoolSelectionScreen extends ConsumerWidget {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(Icons.wifi_off_rounded,
+                    const Icon(Icons.cloud_off_rounded,
                         color: AppColors.textMuted, size: 40),
                     const SizedBox(height: AppDimens.spacingMD),
                     Text(
-                      AppStrings.networkError,
+                      _schoolLoadErrorMessage(e),
                       style: AppTypography.bodyMedium.copyWith(
                         color: AppColors.textMuted,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: AppDimens.spacingMD),
+                    TextButton(
+                      onPressed: () => ref.invalidate(_schoolsProvider),
+                      child: const Text(
+                        'Retry',
+                        style: TextStyle(color: AppColors.accent),
                       ),
                     ),
                   ],
@@ -236,6 +240,19 @@ class SchoolSelectionScreen extends ConsumerWidget {
       ),
     );
   }
+}
+
+String _schoolLoadErrorMessage(Object error) {
+  final text = error.toString();
+  if (text.contains('SUPABASE_ANON_KEY')) {
+    return 'School API key is missing';
+  }
+  if (text.contains('No API key') ||
+      text.contains('401') ||
+      text.contains('JWT')) {
+    return 'Could not authenticate school API';
+  }
+  return 'Could not load schools';
 }
 
 class _SchoolCard extends StatefulWidget {
@@ -319,8 +336,7 @@ class _SchoolCardState extends State<_SchoolCard>
                   height: 72,
                   decoration: BoxDecoration(
                     color: AppColors.background,
-                    borderRadius:
-                        BorderRadius.circular(AppDimens.radiusMD),
+                    borderRadius: BorderRadius.circular(AppDimens.radiusMD),
                     border: Border.all(color: AppColors.border),
                   ),
                   child: widget.school.logoUrl != null

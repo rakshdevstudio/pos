@@ -24,11 +24,12 @@ class _ProductCardState extends State<ProductCard> {
 
   @override
   Widget build(BuildContext context) {
+    final canPurchase = widget.product.hasPurchasableVariant;
     return MouseRegion(
       onEnter: (_) => setState(() => _isHovered = true),
       onExit: (_) => setState(() => _isHovered = false),
       child: GestureDetector(
-        onTap: widget.onTap,
+        onTap: canPurchase ? widget.onTap : null,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: AppDimens.animMedium),
           decoration: BoxDecoration(
@@ -72,18 +73,29 @@ class _ProductCardState extends State<ProductCard> {
                     ),
                     Positioned(
                       bottom: AppDimens.spacingMD,
+                      left: AppDimens.spacingMD,
+                      child: _StockBadge(
+                        label: _stockLabel(widget.product),
+                        available: canPurchase,
+                      ),
+                    ),
+                    Positioned(
+                      bottom: AppDimens.spacingMD,
                       right: AppDimens.spacingMD,
                       child: GestureDetector(
-                        onTap: widget.onTap,
+                        onTap: canPurchase ? widget.onTap : null,
                         child: Container(
                           width: 32,
                           height: 32,
                           decoration: BoxDecoration(
-                            color: AppColors.accent,
+                            color: canPurchase
+                                ? AppColors.accent
+                                : AppColors.textDisabled,
                             shape: BoxShape.circle,
                             boxShadow: [
                               BoxShadow(
-                                color: AppColors.background.withValues(alpha: 0.3),
+                                color:
+                                    AppColors.background.withValues(alpha: 0.3),
                                 blurRadius: 4,
                                 offset: const Offset(0, 2),
                               ),
@@ -107,63 +119,40 @@ class _ProductCardState extends State<ProductCard> {
                 child: Padding(
                   padding: const EdgeInsets.symmetric(
                     horizontal: AppDimens.spacingLG,
-                    vertical: AppDimens.spacingMD,
+                    vertical: 2,
                   ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        widget.product.name.toUpperCase(),
-                        style: AppTypography.labelLarge.copyWith(
-                          color: AppColors.textPrimary,
-                          fontWeight: FontWeight.w600,
-                          letterSpacing: 1,
-                        ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          Expanded(
-                            child: Text(
-                              widget.product.variants.isEmpty
-                                  ? 'Out of stock'
-                                  : widget.product.variants.length > 1
-                                      ? '₹${widget.product.minPrice.toStringAsFixed(0)} – ₹${widget.product.maxPrice.toStringAsFixed(0)}'
-                                      : '₹${widget.product.minPrice.toStringAsFixed(0)}',
-                              style: AppTypography.titleMedium.copyWith(
-                                color: AppColors.accent,
-                                fontWeight: FontWeight.w700,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          widget.product.name.toUpperCase(),
+                          style: AppTypography.labelLarge.copyWith(
+                            color: AppColors.textPrimary,
+                            fontWeight: FontWeight.w600,
+                            letterSpacing: 0.8,
                           ),
-                          if (widget.product.variants.length > 1) ...[
-                            const SizedBox(width: AppDimens.spacingSM),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: AppDimens.spacingSM,
-                                vertical: 2,
-                              ),
-                              decoration: BoxDecoration(
-                                color: AppColors.surfaceHighlight,
-                                borderRadius: BorderRadius.circular(AppDimens.radiusMD),
-                              ),
-                              child: Text(
-                                '${widget.product.variants.length} sizes',
-                                style: AppTypography.labelMedium.copyWith(
-                                  color: AppColors.textSecondary,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ],
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        Text(
+                          widget.product.variants.isEmpty
+                              ? 'No variants'
+                              : widget.product.variants.length > 1
+                                  ? '₹${widget.product.minPrice.toStringAsFixed(0)} – ₹${widget.product.maxPrice.toStringAsFixed(0)} • ${widget.product.variants.length} sizes'
+                                  : '₹${widget.product.minPrice.toStringAsFixed(0)}',
+                          style: AppTypography.bodySmall.copyWith(
+                            color: AppColors.accent,
+                            fontWeight: FontWeight.w700,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -186,6 +175,51 @@ class _ProductCardState extends State<ProductCard> {
       ),
     );
   }
+
+  String _stockLabel(Product product) {
+    final totalStock = product.variants.fold<int>(0, (sum, v) => sum + v.stock);
+    if (totalStock <= 0) return 'Out of stock';
+    return '$totalStock in stock';
+  }
+}
+
+class _StockBadge extends StatelessWidget {
+  final String label;
+  final bool available;
+
+  const _StockBadge({
+    required this.label,
+    required this.available,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final backgroundColor = available
+        ? AppColors.background.withValues(alpha: 0.72)
+        : AppColors.error.withValues(alpha: 0.9);
+    final textColor = available ? AppColors.textPrimary : AppColors.background;
+
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 88),
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppDimens.spacingSM,
+        vertical: 4,
+      ),
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        borderRadius: BorderRadius.circular(AppDimens.radiusFull),
+      ),
+      child: Text(
+        label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: AppTypography.labelMedium.copyWith(
+          color: textColor,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
 }
 
 // Variant selection bottom sheet
@@ -196,6 +230,7 @@ class VariantSheet extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final variants = product.variants;
     return Container(
       decoration: const BoxDecoration(
         color: AppColors.surface,
@@ -231,8 +266,7 @@ class VariantSheet extends ConsumerWidget {
               children: [
                 if (product.imageUrl != null)
                   ClipRRect(
-                    borderRadius:
-                        BorderRadius.circular(AppDimens.radiusMD),
+                    borderRadius: BorderRadius.circular(AppDimens.radiusMD),
                     child: CachedNetworkImage(
                       imageUrl: product.imageUrl!,
                       width: 56,
@@ -282,8 +316,8 @@ class VariantSheet extends ConsumerWidget {
 
           const SizedBox(height: AppDimens.spacingXL),
           Padding(
-            padding: const EdgeInsets.symmetric(
-                horizontal: AppDimens.spacingXXL),
+            padding:
+                const EdgeInsets.symmetric(horizontal: AppDimens.spacingXXL),
             child: Text(
               AppStrings.selectVariant,
               style: AppTypography.bodySmall.copyWith(
@@ -295,11 +329,13 @@ class VariantSheet extends ConsumerWidget {
           const SizedBox(height: AppDimens.spacingMD),
 
           // Variants list
-          ...product.variants.map((variant) => _VariantTile(
+          ...variants.map((variant) => _VariantTile(
                 product: product,
                 variant: variant,
                 onAdd: () {
-                  ref.read(cartProvider.notifier).addItem(product, variant);
+                  final added =
+                      ref.read(cartProvider.notifier).addItem(product, variant);
+                  if (!added) return;
                   Navigator.pop(context);
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
@@ -323,8 +359,8 @@ class VariantSheet extends ConsumerWidget {
               )),
 
           SizedBox(
-              height: MediaQuery.of(context).padding.bottom +
-                  AppDimens.spacingXL),
+              height:
+                  MediaQuery.of(context).padding.bottom + AppDimens.spacingXL),
         ],
       ),
     );
@@ -344,6 +380,7 @@ class _VariantTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final canAdd = variant.stock > 0;
     return Container(
       margin: const EdgeInsets.symmetric(
         horizontal: AppDimens.spacingXXL,
@@ -367,12 +404,17 @@ class _VariantTile extends StatelessWidget {
         ),
         subtitle: variant.sku != null
             ? Text(
-                'SKU: ${variant.sku}',
+                'SKU: ${variant.sku} · ${_stockText(variant)}',
                 style: AppTypography.bodySmall.copyWith(
-                  color: AppColors.textMuted,
+                  color: canAdd ? AppColors.textMuted : AppColors.error,
                 ),
               )
-            : null,
+            : Text(
+                _stockText(variant),
+                style: AppTypography.bodySmall.copyWith(
+                  color: canAdd ? AppColors.textMuted : AppColors.error,
+                ),
+              ),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -385,14 +427,13 @@ class _VariantTile extends StatelessWidget {
             ),
             const SizedBox(width: AppDimens.spacingMD),
             GestureDetector(
-              onTap: onAdd,
+              onTap: canAdd ? onAdd : null,
               child: Container(
                 width: 36,
                 height: 36,
                 decoration: BoxDecoration(
-                  color: AppColors.accent,
-                  borderRadius:
-                      BorderRadius.circular(AppDimens.radiusSM),
+                  color: canAdd ? AppColors.accent : AppColors.textDisabled,
+                  borderRadius: BorderRadius.circular(AppDimens.radiusSM),
                 ),
                 child: const Icon(
                   Icons.add_rounded,
@@ -405,5 +446,10 @@ class _VariantTile extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  String _stockText(Variant variant) {
+    if (variant.stock <= 0) return 'Out of stock';
+    return '${variant.stock} in stock';
   }
 }

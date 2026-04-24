@@ -8,7 +8,10 @@ class AppRouter {
   static Future<GoRouter> create() async {
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString('auth_token');
-    final hasSchool = prefs.containsKey('selected_school_id');
+    final legacySchoolId = prefs.get('selected_school_id');
+    final selectedSchoolId = prefs.getString('selectedSchoolId') ??
+        (legacySchoolId is String ? legacySchoolId : null);
+    final hasSchool = selectedSchoolId?.isNotEmpty == true;
 
     String initialLocation = '/';
     if (token != null && hasSchool) {

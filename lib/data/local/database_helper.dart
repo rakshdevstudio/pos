@@ -42,7 +42,7 @@ class DatabaseHelper {
     await db.execute('''
       CREATE TABLE orders (
         offline_id      TEXT    PRIMARY KEY,
-        school_id       INTEGER NOT NULL,
+        school_id       TEXT    NOT NULL,
         customer_json   TEXT    NOT NULL,
         items_json      TEXT    NOT NULL,
         subtotal        REAL    NOT NULL,
@@ -149,7 +149,10 @@ class DatabaseHelper {
     final db = await database;
     await db.update(
       'orders',
-      {'sync_status': 'pending', 'updated_at': DateTime.now().toIso8601String()},
+      {
+        'sync_status': 'pending',
+        'updated_at': DateTime.now().toIso8601String()
+      },
       where: "sync_status = 'failed' AND retry_count < 5",
     );
   }
@@ -204,7 +207,8 @@ class DatabaseHelper {
       limit: 5,
     );
     return rows
-        .map((r) => jsonDecode(r['customer_json'] as String) as Map<String, dynamic>)
+        .map((r) =>
+            jsonDecode(r['customer_json'] as String) as Map<String, dynamic>)
         .toList();
   }
 
@@ -251,7 +255,8 @@ class DatabaseHelper {
             {
               'offline_id': payload['offline_id'] ?? '',
               'school_id': payload['school_id'] ?? 0,
-              'customer_json': jsonEncode(payload['customer'] ?? {'is_walk_in': true}),
+              'customer_json':
+                  jsonEncode(payload['customer'] ?? {'is_walk_in': true}),
               'items_json': jsonEncode(payload['items'] ?? []),
               'subtotal': (payload['subtotal'] ?? 0).toDouble(),
               'discount_amount': (payload['discount_amount'] ?? 0).toDouble(),
