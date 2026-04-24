@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../../core/constants/constants.dart';
 
 class IllumeButton extends StatelessWidget {
@@ -36,7 +37,7 @@ class IllumeButton extends StatelessWidget {
         : AppColors.background;
 
     final border = isSecondary
-        ? const BorderSide(color: AppColors.border, width: 1)
+        ? const BorderSide(color: AppColors.border, width: 1.5)
         : BorderSide.none;
 
     return AnimatedContainer(
@@ -44,7 +45,12 @@ class IllumeButton extends StatelessWidget {
       width: width ?? double.infinity,
       height: height ?? AppDimens.buttonHeight,
       child: ElevatedButton(
-        onPressed: isLoading ? null : onPressed,
+        onPressed: isLoading || onPressed == null
+            ? null
+            : () {
+                HapticFeedback.lightImpact();
+                onPressed!();
+              },
         style: ElevatedButton.styleFrom(
           backgroundColor: bg,
           foregroundColor: fg,
@@ -54,6 +60,7 @@ class IllumeButton extends StatelessWidget {
             side: border,
           ),
           elevation: 0,
+          splashFactory: InkRipple.splashFactory,
           padding: const EdgeInsets.symmetric(horizontal: AppDimens.spacingLG),
         ),
         child: isLoading

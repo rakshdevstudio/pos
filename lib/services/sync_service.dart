@@ -8,10 +8,11 @@ enum SyncState { idle, syncing, done, offline }
 
 class SyncNotifier extends StateNotifier<SyncState> {
   final OrderRepositoryImpl _orderRepo;
+  final Ref _ref;
   StreamSubscription? _connectivitySub;
   Timer? _retryTimer;
 
-  SyncNotifier(this._orderRepo) : super(SyncState.idle) {
+  SyncNotifier(this._orderRepo, this._ref) : super(SyncState.idle) {
     _listenToConnectivity();
   }
 
@@ -43,6 +44,9 @@ class SyncNotifier extends StateNotifier<SyncState> {
 
     state = failures == 0 ? SyncState.done : SyncState.offline;
 
+    // Refresh provider tally after sync
+    _ref.read(pendingOrdersCountProvider.notifier).refresh();
+
     if (failures > 0) {
       // Schedule retry in 30 seconds
       _retryTimer?.cancel();
@@ -59,5 +63,25 @@ class SyncNotifier extends StateNotifier<SyncState> {
 }
 
 final syncProvider = StateNotifierProvider<SyncNotifier, SyncState>((ref) {
-  return SyncNotifier(OrderRepositoryImpl(ApiClient()));
+  return SyncNotifier(OrderRepositoryImpl(ApiClient()), ref);
+});
+
+class PendingOrdersCountNotifier extends StateNotifier<int> {
+  final OrderRepositoryImpl _repo;
+
+  PendingOrdersCountNotifier(this._repo) : super(0) {
+    refresh();
+  }
+
+  Future<void> refresh() async {
+    state = await _repo.getPendingOrdersCount();
+  }
+
+  void setCount(int val) {
+    state = val;
+  }
+}
+
+final pendingOrdersCountProvider = StateNotifierProvider<PendingOrdersCountNotifier, int>((ref) {
+  return PendingOrdersCountNotifier(OrderRepositoryImpl(ApiClient()));
 });

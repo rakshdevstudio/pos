@@ -9,20 +9,21 @@ class SyncStatusBadge extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final syncState = ref.watch(syncProvider);
+    final pendingCount = ref.watch(pendingOrdersCountProvider);
 
     return AnimatedSwitcher(
       duration: const Duration(milliseconds: AppDimens.animMedium),
-      child: _buildBadge(syncState),
+      child: _buildBadge(syncState, pendingCount),
     );
   }
 
-  Widget _buildBadge(SyncState state) {
+  Widget _buildBadge(SyncState state, int pendingCount) {
     switch (state) {
       case SyncState.offline:
         return _badge(
           key: 'offline',
           icon: Icons.cloud_off_rounded,
-          label: AppStrings.offline,
+          label: pendingCount > 0 ? 'OFFLINE ($pendingCount unsynced)' : AppStrings.offline,
           color: AppColors.error,
         );
       case SyncState.syncing:
@@ -78,10 +79,12 @@ class SyncStatusBadge extends ConsumerWidget {
               : Icon(icon, size: 12, color: color),
           const SizedBox(width: AppDimens.spacingXS),
           Text(
-            label,
+            label.toUpperCase(),
             style: AppTypography.labelMedium.copyWith(
               color: color,
-              letterSpacing: 0.4,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 1.0,
+              fontSize: 10,
             ),
           ),
         ],

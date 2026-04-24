@@ -1,18 +1,54 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../../core/constants/constants.dart';
 import '../../domain/models/models.dart';
 import '../../services/cart_service.dart';
-import '../checkout/checkout_screen.dart';
+import '../../services/sync_service.dart';
+import '../shared/widgets/illume_button.dart';
+import '../checkout/customer_details_sheet.dart';
+import '../checkout/checkout_sheet.dart';
+import 'numpad_sheet.dart';
 
 final _currencyFmt = NumberFormat('#,##0', 'en_IN');
 
-class CartPanel extends ConsumerWidget {
+class CartPanel extends ConsumerStatefulWidget {
   const CartPanel({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<CartPanel> createState() => _CartPanelState();
+}
+
+class _CartPanelState extends ConsumerState<CartPanel> {
+  final ScrollController _scrollController = ScrollController();
+  int _lastCartLength = 0;
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    ref.listen<CartState>(cartProvider, (previous, next) {
+      if (next.items.length > _lastCartLength) {
+        // Auto scroll to bottom smoothly
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (_scrollController.hasClients) {
+            _scrollController.animateTo(
+              _scrollController.position.maxScrollExtent + 100,
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeOut,
+            );
+          }
+        });
+      }
+      _lastCartLength = next.items.length;
+    });
+
     final cart = ref.watch(cartProvider);
 
     return Container(
@@ -104,6 +140,7 @@ class CartPanel extends ConsumerWidget {
             child: cart.items.isEmpty
                 ? _emptyCart()
                 : ListView.separated(
+                    controller: _scrollController,
                     padding: const EdgeInsets.symmetric(
                       vertical: AppDimens.spacingMD,
                     ),
@@ -115,8 +152,8 @@ class CartPanel extends ConsumerWidget {
                       endIndent: AppDimens.spacingXXL,
                     ),
                     itemBuilder: (context, index) {
-                      final item = cart.items[index];
-                      return _CartItemTile(item: item);
+                      final itemKey = cart.items[index].key;
+                      return _CartItemTile(itemId: itemKey);
                     },
                   ),
           ),
@@ -160,20 +197,63 @@ class CartPanel extends ConsumerWidget {
 }
 
 class _CartItemTile extends ConsumerWidget {
-  final CartItem item;
+  final String itemId;
 
-  const _CartItemTile({required this.item});
+  const _CartItemTile({required this.itemId});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppDimens.spacingXXL,
-        vertical: AppDimens.spacingMD,
+    // Graceful fallback for dismissed items actively animating out
+    final item = ref.watch(
+      cartProvider.select(
+        (c) => c.items.cast<CartItem?>().firstWhere((e) => e?.key == itemId, orElse: () => null),
       ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
+    );
+
+    if (item == null) return const SizedBox.shrink();
+
+    return Dismissible(
+      key: ValueKey(item.key),
+      direction: DismissDirection.endToStart,
+      dismissThresholds: const {
+        DismissDirection.endToStart: 0.45,
+      },
+      onDismissed: (direction) {
+        HapticFeedback.mediumImpact();
+        ref.read(cartProvider.notifier).removeItem(item.key);
+        
+        // Custom undo snackbar
+        ScaffoldMessenger.of(context).clearSnackBars();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${item.product.name} removed'),
+            backgroundColor: AppColors.surfaceElevated,
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 5),
+            action: SnackBarAction(
+              label: 'UNDO',
+              textColor: AppColors.accent,
+              onPressed: () {
+                ref.read(cartProvider.notifier).undo();
+              },
+            ),
+          ),
+        );
+      },
+      background: Container(
+        color: AppColors.error,
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: AppDimens.spacingXXL),
+        child: const Icon(Icons.delete_outline_rounded, color: AppColors.background),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppDimens.spacingXXL,
+          vertical: AppDimens.spacingMD,
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
           // Info
           Expanded(
             child: Column(
@@ -226,14 +306,31 @@ class _CartItemTile extends ConsumerWidget {
                         .read(cartProvider.notifier)
                         .decrementQuantity(item.key),
                   ),
-                  SizedBox(
-                    width: 32,
-                    child: Text(
-                      '${item.quantity}',
-                      style: AppTypography.titleMedium.copyWith(
-                        color: AppColors.textPrimary,
+                  GestureDetector(
+                    onLongPress: () async {
+                      HapticFeedback.lightImpact();
+                      final newValue = await showModalBottomSheet<int>(
+                        context: context,
+                        isScrollControlled: true,
+                        backgroundColor: Colors.transparent,
+                        builder: (_) => NumpadSheet(
+                          initialValue: item.quantity,
+                          title: 'SET QUANTITY',
+                        ),
+                      );
+                      if (newValue != null && newValue >= 0) {
+                        ref.read(cartProvider.notifier).setQuantity(item.key, newValue);
+                      }
+                    },
+                    child: SizedBox(
+                      width: 32,
+                      child: Text(
+                        '${item.quantity}',
+                        style: AppTypography.titleMedium.copyWith(
+                          color: AppColors.textPrimary,
+                        ),
+                        textAlign: TextAlign.center,
                       ),
-                      textAlign: TextAlign.center,
                     ),
                   ),
                   _QtyButton(
@@ -249,7 +346,7 @@ class _CartItemTile extends ConsumerWidget {
           ),
         ],
       ),
-    );
+    ));
   }
 }
 
@@ -269,14 +366,14 @@ class _QtyButton extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        width: 28,
-        height: 28,
+        width: 36,
+        height: 36,
         decoration: BoxDecoration(
           color: AppColors.surface,
-          borderRadius: BorderRadius.circular(AppDimens.radiusXS),
+          borderRadius: BorderRadius.circular(AppDimens.radiusSM),
           border: Border.all(color: AppColors.border),
         ),
-        child: Icon(icon, size: 14, color: color),
+        child: Icon(icon, size: 20, color: color),
       ),
     );
   }
@@ -343,16 +440,19 @@ class _CartFooter extends ConsumerWidget {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
-                AppStrings.total,
-                style: AppTypography.headlineSmall.copyWith(
+                AppStrings.total.toUpperCase(),
+                style: AppTypography.titleLarge.copyWith(
                   color: AppColors.textPrimary,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 2,
                 ),
               ),
               Text(
                 '₹${_currencyFmt.format(cart.total)}',
                 style: AppTypography.monoPrice.copyWith(
-                  color: AppColors.textPrimary,
-                  fontSize: 28,
+                  color: AppColors.accent,
+                  fontSize: 36,
+                  fontWeight: FontWeight.w800,
                 ),
               ),
             ],
@@ -364,46 +464,29 @@ class _CartFooter extends ConsumerWidget {
           AnimatedOpacity(
             opacity: cart.items.isEmpty ? 0.4 : 1.0,
             duration: const Duration(milliseconds: AppDimens.animMedium),
-            child: SizedBox(
-              width: double.infinity,
+            child: IllumeButton(
+              label: '${AppStrings.checkout.toUpperCase()} · ${cart.itemCount}',
+              icon: Icons.point_of_sale_rounded,
               height: AppDimens.buttonHeightLG,
-              child: ElevatedButton(
-                onPressed: cart.items.isEmpty
-                    ? null
-                    : () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            fullscreenDialog: true,
-                            builder: (_) => const CheckoutScreen(),
-                          ),
+              onPressed: cart.items.isEmpty
+                  ? null
+                  : () async {
+                      final customer = await showModalBottomSheet<CustomerInfo>(
+                        context: context,
+                        isScrollControlled: true,
+                        backgroundColor: Colors.transparent,
+                        builder: (_) => CustomerDetailsSheet(),
+                      );
+
+                      if (customer != null && context.mounted) {
+                        showModalBottomSheet(
+                          context: context,
+                          isScrollControlled: true,
+                          backgroundColor: Colors.transparent,
+                          builder: (_) => CheckoutSheet(customer: customer),
                         );
-                      },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.accent,
-                  foregroundColor: AppColors.background,
-                  disabledBackgroundColor:
-                      AppColors.accent.withValues(alpha: 0.4),
-                  shape: RoundedRectangleBorder(
-                    borderRadius:
-                        BorderRadius.circular(AppDimens.radiusMD),
-                  ),
-                  elevation: 0,
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Icon(Icons.point_of_sale_rounded, size: 20),
-                    const SizedBox(width: AppDimens.spacingSM),
-                    Text(
-                      '${AppStrings.checkout} · ${cart.itemCount} item${cart.itemCount == 1 ? '' : 's'}',
-                      style: AppTypography.titleLarge.copyWith(
-                        color: AppColors.background,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+                      }
+                    },
             ),
           ),
         ],

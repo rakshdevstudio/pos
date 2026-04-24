@@ -10,12 +10,35 @@ class OrderRepositoryImpl implements OrderRepository {
 
   OrderRepositoryImpl(this._apiClient);
 
+  Future<int> getPendingOrdersCount() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_pendingOrdersKey);
+    if (raw == null) return 0;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is List) return decoded.length;
+    } catch (_) {}
+    return 0;
+  }
+
   @override
   Future<int> saveOrderLocally(Order order) async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString(_pendingOrdersKey);
-    final List<dynamic> existing = raw != null ? jsonDecode(raw) : [];
-    existing.add(_orderToStorageMap(order));
+    List<dynamic> existing = [];
+    if (raw != null) {
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is List) existing = decoded;
+      } catch (_) {}
+    }
+    
+    // Future-proof schema version wrapper
+    existing.add({
+      'version': 1,
+      'payload': _orderToStorageMap(order),
+    });
+    
     await prefs.setString(_pendingOrdersKey, jsonEncode(existing));
     return existing.length;
   }

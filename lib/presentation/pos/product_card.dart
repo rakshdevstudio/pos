@@ -43,82 +43,124 @@ class _ProductCardState extends State<ProductCard> {
             children: [
               // Product image
               Expanded(
-                flex: 3,
-                child: ClipRRect(
-                  borderRadius: const BorderRadius.vertical(
-                    top: Radius.circular(AppDimens.radiusLG),
-                  ),
-                  child: widget.product.imageUrl != null
-                      ? CachedNetworkImage(
-                          imageUrl: widget.product.imageUrl!,
-                          fit: BoxFit.cover,
-                          width: double.infinity,
-                          placeholder: (_, __) => Container(
-                            color: AppColors.surfaceElevated,
-                            child: const Center(
-                              child: Icon(
-                                Icons.image_outlined,
-                                color: AppColors.textDisabled,
-                                size: 32,
+                flex: 5,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    ClipRRect(
+                      borderRadius: const BorderRadius.vertical(
+                        top: Radius.circular(AppDimens.radiusLG),
+                      ),
+                      child: widget.product.imageUrl != null
+                          ? CachedNetworkImage(
+                              imageUrl: widget.product.imageUrl!,
+                              fit: BoxFit.cover,
+                              width: double.infinity,
+                              placeholder: (_, __) => Container(
+                                color: AppColors.surfaceHighlight,
+                                child: const Center(
+                                  child: Icon(
+                                    Icons.image_outlined,
+                                    color: AppColors.textDisabled,
+                                    size: 32,
+                                  ),
+                                ),
                               ),
-                            ),
+                              errorWidget: (_, __, ___) => _placeholder(),
+                            )
+                          : _placeholder(),
+                    ),
+                    Positioned(
+                      bottom: AppDimens.spacingMD,
+                      right: AppDimens.spacingMD,
+                      child: GestureDetector(
+                        onTap: widget.onTap,
+                        child: Container(
+                          width: 32,
+                          height: 32,
+                          decoration: BoxDecoration(
+                            color: AppColors.accent,
+                            shape: BoxShape.circle,
+                            boxShadow: [
+                              BoxShadow(
+                                color: AppColors.background.withValues(alpha: 0.3),
+                                blurRadius: 4,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
                           ),
-                          errorWidget: (_, __, ___) => _placeholder(),
-                        )
-                      : _placeholder(),
+                          child: const Icon(
+                            Icons.add_rounded,
+                            color: AppColors.background,
+                            size: 20,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
 
               // Product info
               Expanded(
-                flex: 2,
+                flex: 3,
                 child: Padding(
-                  padding: const EdgeInsets.all(AppDimens.spacingMD),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppDimens.spacingLG,
+                    vertical: AppDimens.spacingMD,
+                  ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Text(
-                        widget.product.name,
-                        style: AppTypography.titleMedium.copyWith(
+                        widget.product.name.toUpperCase(),
+                        style: AppTypography.labelLarge.copyWith(
                           color: AppColors.textPrimary,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 1,
                         ),
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
                       Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
                         children: [
-                          Text(
-                            widget.product.variants.isEmpty
-                                ? 'No variants'
-                                : widget.product.variants.length > 1
-                                    ? '₹${widget.product.minPrice.toStringAsFixed(0)} – ₹${widget.product.maxPrice.toStringAsFixed(0)}'
-                                    : '₹${widget.product.minPrice.toStringAsFixed(0)}',
-                            style: AppTypography.bodySmall.copyWith(
-                              color: AppColors.accent,
-                              fontWeight: FontWeight.w600,
+                          Expanded(
+                            child: Text(
+                              widget.product.variants.isEmpty
+                                  ? 'Out of stock'
+                                  : widget.product.variants.length > 1
+                                      ? '₹${widget.product.minPrice.toStringAsFixed(0)} – ₹${widget.product.maxPrice.toStringAsFixed(0)}'
+                                      : '₹${widget.product.minPrice.toStringAsFixed(0)}',
+                              style: AppTypography.titleMedium.copyWith(
+                                color: AppColors.accent,
+                                fontWeight: FontWeight.w700,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                             ),
                           ),
-                          const Spacer(),
-                          if (widget.product.variants.isNotEmpty)
+                          if (widget.product.variants.length > 1) ...[
+                            const SizedBox(width: AppDimens.spacingSM),
                             Container(
                               padding: const EdgeInsets.symmetric(
-                                horizontal: AppDimens.spacingXS,
+                                horizontal: AppDimens.spacingSM,
                                 vertical: 2,
                               ),
                               decoration: BoxDecoration(
                                 color: AppColors.surfaceHighlight,
-                                borderRadius:
-                                    BorderRadius.circular(AppDimens.radiusXS),
+                                borderRadius: BorderRadius.circular(AppDimens.radiusMD),
                               ),
                               child: Text(
                                 '${widget.product.variants.length} sizes',
                                 style: AppTypography.labelMedium.copyWith(
-                                  color: AppColors.textMuted,
-                                  fontSize: 10,
+                                  color: AppColors.textSecondary,
+                                  fontWeight: FontWeight.w600,
                                 ),
                               ),
                             ),
+                          ],
                         ],
                       ),
                     ],

@@ -1,4 +1,7 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:go_router/go_router.dart';
@@ -33,8 +36,23 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   final _barcodeController = TextEditingController();
   final _barcodeFocus = FocusNode();
   int? _schoolId;
-  String _schoolName = 'Store';
+  String? _schoolName;
   ProductRepositoryImpl? _productRepo;
+
+  String? _lastCode;
+  DateTime? _lastTime;
+
+  bool _shouldDrop(String code) {
+    final now = DateTime.now();
+    if (_lastCode == code &&
+        _lastTime != null &&
+        now.difference(_lastTime!) < const Duration(milliseconds: 400)) {
+      return true;
+    }
+    _lastCode = code;
+    _lastTime = now;
+    return false;
+  }
 
   @override
   void initState() {
@@ -58,6 +76,12 @@ class _PosScreenState extends ConsumerState<PosScreen> {
 
   void _handleBarcodeSubmit(String sku) {
     if (sku.isEmpty) return;
+    if (_shouldDrop(sku)) {
+      _barcodeController.clear();
+      _barcodeFocus.requestFocus();
+      return;
+    }
+
     final variant = _productRepo?.findVariantBySku(sku);
     if (variant == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -122,30 +146,51 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   }
 
   Widget _buildPosLayout() {
-    return Column(
+    final width = MediaQuery.of(context).size.width;
+    
+    final productsPanel = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // TOP: Products Panel
-        Expanded(
-          flex: 6,
-          child: Column(
-            children: [
-              _buildTopBar(),
-              const Divider(height: 1, color: AppColors.border),
-              _buildSearchAndBarcode(),
-              _buildCategoryFilter(),
-              Expanded(child: _buildProductGrid()),
-            ],
-          ),
-        ),
+        _buildTopBar(),
         const Divider(height: 1, color: AppColors.border),
-        // BOTTOM: Cart Panel
-        const Expanded(
-          flex: 4,
-          child: CartPanel(),
-        ),
+        _buildSearchAndBarcode(),
+        _buildCategoryFilter(),
+        Expanded(child: _buildProductGrid()),
       ],
     );
+
+    if (width > 600) {
+      // TABLET / LARGE SCREEN (Landscape split)
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const SizedBox(
+            width: 320, 
+            child: CartPanel(),
+          ),
+          const VerticalDivider(width: 1, thickness: 1, color: AppColors.border),
+          Expanded(
+            child: productsPanel,
+          ),
+        ],
+      );
+    } else {
+      // MOBILE (Portrait stacked)
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(
+            flex: 5,
+            child: productsPanel,
+          ),
+          const Divider(height: 1, color: AppColors.border),
+          const Expanded(
+            flex: 4,
+            child: CartPanel(),
+          ),
+        ],
+      );
+    }
   }
 
   Widget _buildTopBar() {
@@ -155,8 +200,8 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       child: Row(
         children: [
           Text(
-            _schoolName,
-            style: AppTypography.headlineSmall.copyWith(
+            _schoolName ?? 'Store',
+            style: AppTypography.titleLarge.copyWith(
               color: AppColors.textPrimary,
             ),
           ),
@@ -344,12 +389,31 @@ class _PosScreenState extends ConsumerState<PosScreen> {
             return ProductCard(
               product: product,
               onTap: () {
-                showModalBottomSheet(
-                  context: context,
-                  isScrollControlled: true,
-                  backgroundColor: Colors.transparent,
-                  builder: (_) => VariantSheet(product: product),
-                );
+                if (product.variants.length == 1) {
+                  HapticFeedback.lightImpact();
+                  ref.read(cartProvider.notifier).addItem(product, product.variants.first);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Row(
+                        children: [
+                          const Icon(Icons.check_circle_rounded, color: AppColors.success, size: 16),
+                          const SizedBox(width: AppDimens.spacingSM),
+                          Text('${product.name} added', style: AppTypography.bodySmall.copyWith(color: AppColors.textPrimary)),
+                        ],
+                      ),
+                      duration: const Duration(seconds: 1),
+                      behavior: SnackBarBehavior.floating,
+                      backgroundColor: AppColors.surfaceElevated,
+                    ),
+                  );
+                } else {
+                  showModalBottomSheet(
+                    context: context,
+                    isScrollControlled: true,
+                    backgroundColor: Colors.transparent,
+                    builder: (_) => VariantSheet(product: product),
+                  );
+                }
               },
             );
           },
@@ -485,10 +549,11 @@ class _CategoryChip extends StatelessWidget {
           ),
         ),
         child: Text(
-          label,
+          label.toUpperCase(),
           style: AppTypography.labelMedium.copyWith(
             color: isSelected ? AppColors.background : AppColors.textSecondary,
-            fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 1.0,
           ),
         ),
       ),

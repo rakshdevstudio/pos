@@ -345,11 +345,13 @@ class _SchoolCardState extends State<_SchoolCard>
                 ),
                 const SizedBox(height: AppDimens.spacingMD),
                 Text(
-                  widget.school.name,
-                  style: AppTypography.titleMedium.copyWith(
+                  widget.school.name.toUpperCase(),
+                  style: AppTypography.labelLarge.copyWith(
                     color: widget.isSelected
                         ? AppColors.accent
                         : AppColors.textPrimary,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 1,
                   ),
                   textAlign: TextAlign.center,
                   maxLines: 2,

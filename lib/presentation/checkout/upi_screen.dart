@@ -186,7 +186,9 @@ class _UpiScreenState extends State<UpiScreen>
         Text(
           '₹${widget.total.toStringAsFixed(2)}',
           style: AppTypography.monoPrice.copyWith(
-            color: AppColors.textPrimary,
+            color: AppColors.accent,
+            fontSize: 40,
+            fontWeight: FontWeight.w800,
           ),
         ),
         const SizedBox(height: AppDimens.spacingXS),

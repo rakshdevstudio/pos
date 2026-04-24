@@ -9,11 +9,6 @@ import 'services/sync_service.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Lock to portrait mode for standard phones
-  await SystemChrome.setPreferredOrientations([
-    DeviceOrientation.portraitUp,
-  ]);
-
   // Immersive mode for POS — no status bar distractions
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
 

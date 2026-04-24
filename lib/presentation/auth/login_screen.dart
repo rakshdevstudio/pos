@@ -104,25 +104,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
       backgroundColor: AppColors.background,
       body: Stack(
         children: [
-          // Subtle background gradient
-          Positioned(
-            top: -200,
-            left: size.width * 0.5 - 300,
-            child: Container(
-              width: 600,
-              height: 600,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: RadialGradient(
-                  colors: [
-                    AppColors.accent.withValues(alpha: 0.04),
-                    Colors.transparent,
-                  ],
-                ),
-              ),
-            ),
-          ),
-
           // Main content
           Center(
             child: FadeTransition(
