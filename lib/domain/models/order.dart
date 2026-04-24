@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'cart_item.dart';
 import 'customer_info.dart';
 
@@ -32,15 +33,42 @@ class Order {
     this.remoteId,
   });
 
+  /// Full backend payload — matches the agreed API contract exactly.
   Map<String, dynamic> toJson() => {
         'offline_id': offlineId,
-        'customer': customer.toJson(),
         'school_id': schoolId,
-        'items': items.map((i) => i.toOrderLine()).toList(),
+        'customer': {
+          'phone': customer.isWalkIn ? null : customer.phone,
+          'name': customer.name,
+          'is_walk_in': customer.isWalkIn,
+        },
+        'student': {
+          'name': customer.studentName,
+          'class': customer.studentClass,
+        },
+        'items': items
+            .map((i) => {
+                  'product_id': i.product.id,
+                  'variant_id': i.variant.id,
+                  'quantity': i.quantity,
+                  'price': i.variant.price,
+                  'line_total': i.lineTotal,
+                })
+            .toList(),
         'subtotal': subtotal,
-        'discount_amount': discountAmount,
+        'discount': discountAmount,
         'total': total,
         'payment_method': paymentMethod.name,
         'created_at': createdAt.toIso8601String(),
+        'device_id': _deviceId(),
+        'schema_version': 1,
       };
+
+  static String _deviceId() {
+    try {
+      return Platform.localHostname;
+    } catch (_) {
+      return 'unknown';
+    }
+  }
 }

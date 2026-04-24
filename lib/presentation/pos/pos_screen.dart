@@ -1,13 +1,11 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/constants/constants.dart';
+import '../../core/providers/providers.dart';
 import '../../data/remote/api_client.dart';
-import '../../data/repositories/product_repository_impl.dart';
 import '../../domain/models/models.dart';
 import '../../services/cart_service.dart';
 import '../shared/widgets/sync_status_badge.dart';
@@ -16,7 +14,7 @@ import 'product_card.dart';
 
 final _productsProvider =
     FutureProvider.family<List<Product>, int>((ref, schoolId) async {
-  final repo = ProductRepositoryImpl(ApiClient());
+  final repo = ref.read(productRepoProvider);
   await repo.loadCache(schoolId);
   return repo.getProducts(schoolId);
 });
@@ -37,7 +35,6 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   final _barcodeFocus = FocusNode();
   int? _schoolId;
   String? _schoolName;
-  ProductRepositoryImpl? _productRepo;
 
   String? _lastCode;
   DateTime? _lastTime;
@@ -69,8 +66,8 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       _schoolName = name;
     });
     if (id != null) {
-      _productRepo = ProductRepositoryImpl(ApiClient());
-      await _productRepo!.loadCache(id);
+      final repo = ref.read(productRepoProvider);
+      await repo.loadCache(id);
     }
   }
 
@@ -82,7 +79,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       return;
     }
 
-    final variant = _productRepo?.findVariantBySku(sku);
+    final variant = ref.read(productRepoProvider).findVariantBySku(sku);
     if (variant == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -97,7 +94,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     } else {
       // Find parent product
       if (_schoolId != null) {
-        final products = _productRepo!.getCachedProducts(_schoolId!);
+        final products = ref.read(productRepoProvider).getCachedProducts(_schoolId!);
         final product = products.firstWhere(
           (p) => p.variants.any((v) => v.id == variant.id),
           orElse: () => products.first,

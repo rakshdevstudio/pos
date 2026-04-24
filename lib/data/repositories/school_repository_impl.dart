@@ -13,7 +13,7 @@ class SchoolRepositoryImpl implements SchoolRepository {
   @override
   Future<List<School>> getSchools() async {
     try {
-      final baseUrl = await ApiClient.getBaseUrl();
+      final baseUrl = ApiClient.baseUrl;
       final response = await _apiClient.dio.get('$baseUrl/schools');
       final data = response.data as List<dynamic>;
       final schools = data

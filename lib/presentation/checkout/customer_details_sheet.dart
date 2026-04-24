@@ -1,31 +1,31 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants/constants.dart';
-import '../../data/remote/api_client.dart';
-import '../../data/repositories/customer_repository.dart';
+import '../../core/providers/providers.dart';
 import '../../domain/models/customer_info.dart';
 import '../shared/widgets/illume_button.dart';
 
-class CustomerDetailsSheet extends StatefulWidget {
+class CustomerDetailsSheet extends ConsumerStatefulWidget {
   const CustomerDetailsSheet({super.key});
 
   @override
-  State<CustomerDetailsSheet> createState() => _CustomerDetailsSheetState();
+  ConsumerState<CustomerDetailsSheet> createState() =>
+      _CustomerDetailsSheetState();
 }
 
-class _CustomerDetailsSheetState extends State<CustomerDetailsSheet> {
+class _CustomerDetailsSheetState extends ConsumerState<CustomerDetailsSheet> {
   final _formKey = GlobalKey<FormState>();
   final _phoneController = TextEditingController();
-  final _nameController = TextEditingController(); // Parent name
+  final _nameController = TextEditingController();
   final _studentNameController = TextEditingController();
   final _addressController = TextEditingController();
-  
+
   String? _selectedClass;
   bool _isSearching = false;
   List<CustomerInfo> _suggestions = [];
   Timer? _debounce;
-  late CustomerRepository _customerRepo;
 
   final List<String> _classes = [
     'Pre-KG', 'LKG', 'UKG',
@@ -33,12 +33,6 @@ class _CustomerDetailsSheetState extends State<CustomerDetailsSheet> {
     'Class 6', 'Class 7', 'Class 8', 'Class 9', 'Class 10',
     'Class 11', 'Class 12',
   ];
-
-  @override
-  void initState() {
-    super.initState();
-    _customerRepo = CustomerRepository(ApiClient());
-  }
 
   @override
   void dispose() {
@@ -55,7 +49,8 @@ class _CustomerDetailsSheetState extends State<CustomerDetailsSheet> {
     _debounce = Timer(const Duration(milliseconds: 300), () async {
       if (value.length >= 3) {
         setState(() => _isSearching = true);
-        final results = await _customerRepo.searchCustomers(value);
+        final repo = ref.read(customerRepoProvider);
+        final results = await repo.searchCustomers(value);
         if (mounted) {
           setState(() {
             _suggestions = results;
@@ -87,10 +82,10 @@ class _CustomerDetailsSheetState extends State<CustomerDetailsSheet> {
         name: _nameController.text.isEmpty ? null : _nameController.text,
         studentName: _studentNameController.text,
         studentClass: _selectedClass,
-        // Using address field for now, will keep it in payload if needed
+        address: _addressController.text.isEmpty ? null : _addressController.text,
         isWalkIn: false,
       );
-      _customerRepo.saveRecentCustomer(info);
+      ref.read(customerRepoProvider).saveRecentCustomer(info);
       Navigator.pop(context, info);
     }
   }
@@ -100,7 +95,9 @@ class _CustomerDetailsSheetState extends State<CustomerDetailsSheet> {
     return Container(
       decoration: const BoxDecoration(
         color: AppColors.surface,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(AppDimens.radiusXXL)),
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(AppDimens.radiusXXL),
+        ),
       ),
       padding: EdgeInsets.fromLTRB(
         AppDimens.spacingXXL,
@@ -126,16 +123,18 @@ class _CustomerDetailsSheetState extends State<CustomerDetailsSheet> {
                     ),
                   ),
                   TextButton.icon(
-                    onPressed: () => Navigator.pop(context, CustomerInfo.walkIn()),
+                    onPressed: () =>
+                        Navigator.pop(context, CustomerInfo.walkIn()),
                     icon: const Icon(Icons.directions_walk_rounded, size: 18),
                     label: const Text('WALK-IN'),
-                    style: TextButton.styleFrom(foregroundColor: AppColors.accent),
+                    style: TextButton.styleFrom(
+                        foregroundColor: AppColors.accent),
                   ),
                 ],
               ),
               const SizedBox(height: AppDimens.spacingXL),
-              
-              // Phone Field with suggestions stack
+
+              // Phone Field with suggestions
               Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -145,56 +144,74 @@ class _CustomerDetailsSheetState extends State<CustomerDetailsSheet> {
                     decoration: InputDecoration(
                       labelText: 'Phone Number',
                       prefixIcon: const Icon(Icons.phone_android_rounded),
-                      suffixIcon: _isSearching 
-                        ? const SizedBox(width: 20, height: 20, child: Padding(padding: EdgeInsets.all(12), child: CircularProgressIndicator(strokeWidth: 2)))
-                        : null,
+                      suffixIcon: _isSearching
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: Padding(
+                                padding: EdgeInsets.all(12),
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2),
+                              ),
+                            )
+                          : null,
                     ),
                     onChanged: _onPhoneChanged,
-                    validator: (v) => (v == null || v.isEmpty) ? 'Required' : null,
+                    validator: (v) =>
+                        (v == null || v.isEmpty) ? 'Required' : null,
                   ),
                   if (_suggestions.isNotEmpty)
                     Container(
                       margin: const EdgeInsets.only(top: 4),
                       decoration: BoxDecoration(
                         color: AppColors.surfaceElevated,
-                        borderRadius: BorderRadius.circular(AppDimens.radiusMD),
+                        borderRadius:
+                            BorderRadius.circular(AppDimens.radiusMD),
                         border: Border.all(color: AppColors.border),
                       ),
                       child: Column(
-                        children: _suggestions.map((s) => ListTile(
-                          title: Text(s.studentName ?? 'Unknown Student'),
-                          subtitle: Text('${s.phone} · ${s.studentClass ?? "No Class"}'),
-                          onTap: () => _selectSuggestion(s),
-                          dense: true,
-                        )).toList(),
+                        children: _suggestions
+                            .map((s) => ListTile(
+                                  title: Text(
+                                      s.studentName ?? 'Unknown Student'),
+                                  subtitle: Text(
+                                      '${s.phone} · ${s.studentClass ?? "No Class"}'),
+                                  onTap: () => _selectSuggestion(s),
+                                  dense: true,
+                                ))
+                            .toList(),
                       ),
                     ),
                 ],
               ),
               const SizedBox(height: AppDimens.spacingLG),
-              
+
               TextFormField(
                 controller: _studentNameController,
                 decoration: const InputDecoration(
                   labelText: 'Student Name',
-                  prefixIcon: const Icon(Icons.person_outline_rounded),
+                  prefixIcon: Icon(Icons.person_outline_rounded),
                 ),
-                validator: (v) => (v == null || v.isEmpty) ? 'Required' : null,
+                validator: (v) =>
+                    (v == null || v.isEmpty) ? 'Required' : null,
               ),
               const SizedBox(height: AppDimens.spacingLG),
-              
+
               DropdownButtonFormField<String>(
                 value: _selectedClass,
                 decoration: const InputDecoration(
                   labelText: 'Class',
                   prefixIcon: Icon(Icons.school_outlined),
                 ),
-                items: _classes.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
+                items: _classes
+                    .map((c) =>
+                        DropdownMenuItem(value: c, child: Text(c)))
+                    .toList(),
                 onChanged: (v) => setState(() => _selectedClass = v),
                 validator: (v) => v == null ? 'Required' : null,
               ),
               const SizedBox(height: AppDimens.spacingLG),
-              
+
               TextFormField(
                 controller: _addressController,
                 decoration: const InputDecoration(
@@ -203,7 +220,7 @@ class _CustomerDetailsSheetState extends State<CustomerDetailsSheet> {
                 ),
                 maxLines: 1,
               ),
-              
+
               const SizedBox(height: AppDimens.spacingXXL),
               IllumeButton(
                 label: 'CONTINUE TO PAYMENT',

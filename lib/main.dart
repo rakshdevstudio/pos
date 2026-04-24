@@ -4,6 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'core/theme/app_theme.dart';
 import 'core/router/app_router.dart';
+import 'data/local/database_helper.dart';
+import 'data/remote/api_client.dart';
 import 'services/sync_service.dart';
 
 void main() async {
@@ -11,7 +13,6 @@ void main() async {
 
   // Immersive mode for POS — no status bar distractions
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
@@ -19,7 +20,18 @@ void main() async {
     ),
   );
 
+  // Init secure storage base URL cache (sync, avoids per-request async)
+  await ApiClient.initBaseUrl();
+
+  // Run atomic SharedPreferences → SQLite migration (no-op if already done)
+  await DatabaseHelper.instance.migrateFromSharedPreferences();
+
   final router = await AppRouter.create();
+
+  // Register 401 logout callback — navigates to '/' without BuildContext
+  setGlobalLogoutCallback(() {
+    router.go('/');
+  });
 
   runApp(
     ProviderScope(
@@ -40,7 +52,8 @@ class _IllumePosAppState extends ConsumerState<IllumePosApp> {
   @override
   void initState() {
     super.initState();
-    // Kick off background sync watcher
+    // Kick off background sync watcher (SyncNotifier registers its own
+    // lifecycle observer internally, so this just ensures the provider is alive)
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(syncProvider);
     });

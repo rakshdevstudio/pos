@@ -5,8 +5,7 @@ import 'package:intl/intl.dart';
 import 'package:uuid/uuid.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/constants/constants.dart';
-import '../../data/remote/api_client.dart';
-import '../../data/repositories/order_repository_impl.dart';
+import '../../core/providers/providers.dart';
 import '../../domain/models/models.dart';
 import '../../services/cart_service.dart';
 import '../../services/sync_service.dart';
@@ -113,11 +112,14 @@ class _CheckoutSheetState extends ConsumerState<CheckoutSheet> {
         createdAt: DateTime.now(),
       );
 
-      final repo = OrderRepositoryImpl(ApiClient());
+      // Use provider singleton — no direct instantiation
+      final repo = ref.read(orderRepoProvider);
       final newCount = await repo.saveOrderLocally(order);
       ref.read(pendingOrdersCountProvider.notifier).setCount(newCount);
 
-      repo.syncOrder(order);
+      // Non-blocking sync attempt
+      ref.read(syncProvider.notifier).syncPendingOrders();
+
       ref.read(cartProvider.notifier).processCheckout();
       HapticFeedback.heavyImpact();
 

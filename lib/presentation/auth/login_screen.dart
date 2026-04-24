@@ -68,7 +68,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
       }
 
       final apiClient = ApiClient();
-      final baseUrl = await ApiClient.getBaseUrl();
+      final baseUrl = ApiClient.baseUrl;
       final response = await apiClient.dio.post(
         '$baseUrl/auth/login',
         data: {

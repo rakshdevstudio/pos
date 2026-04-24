@@ -1,20 +1,41 @@
 import 'dart:async';
+import 'dart:math';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../data/remote/api_client.dart';
+import '../core/providers/providers.dart';
 import '../data/repositories/order_repository_impl.dart';
 
 enum SyncState { idle, syncing, done, offline }
 
-class SyncNotifier extends StateNotifier<SyncState> {
+class SyncNotifier extends StateNotifier<SyncState> with WidgetsBindingObserver {
   final OrderRepositoryImpl _orderRepo;
   final Ref _ref;
+
   StreamSubscription? _connectivitySub;
   Timer? _retryTimer;
 
+  /// Future-based mutex — if a sync is in progress, new callers
+  /// await the same Future instead of spawning a duplicate.
+  Future<void>? _syncFuture;
+
   SyncNotifier(this._orderRepo, this._ref) : super(SyncState.idle) {
+    WidgetsBinding.instance.addObserver(this);
     _listenToConnectivity();
+    // Kick off initial sync on startup
+    syncPendingOrders();
   }
+
+  // ── Lifecycle ──────────────────────────────────────────────────────────────
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      syncPendingOrders();
+    }
+  }
+
+  // ── Connectivity ───────────────────────────────────────────────────────────
 
   void _listenToConnectivity() {
     _connectivitySub = Connectivity().onConnectivityChanged.listen((results) {
@@ -22,48 +43,83 @@ class SyncNotifier extends StateNotifier<SyncState> {
       if (isOnline) {
         syncPendingOrders();
       } else {
-        state = SyncState.offline;
+        if (state != SyncState.syncing) {
+          state = SyncState.offline;
+        }
       }
     });
   }
 
-  Future<void> syncPendingOrders() async {
+  // ── Public sync entry point (mutex-locked) ─────────────────────────────────
+
+  Future<void> syncPendingOrders() {
+    _syncFuture ??= _runSync().whenComplete(() => _syncFuture = null);
+    return _syncFuture!;
+  }
+
+  // ── Core sync loop ─────────────────────────────────────────────────────────
+
+  Future<void> _runSync() async {
     final pending = await _orderRepo.getPendingOrders();
     if (pending.isEmpty) {
       state = SyncState.done;
+      await _refreshCount();
       return;
     }
 
     state = SyncState.syncing;
-    int failures = 0;
+    bool hadFailure = false;
+    int failRetryCount = 0; // track retry_count of failed order for backoff
 
     for (final order in pending) {
       final success = await _orderRepo.syncOrder(order);
-      if (!success) failures++;
+      if (!success) {
+        hadFailure = true;
+        // Use the order's retry_count from DB for backoff calculation
+        // (we approximate here; the DB is the source of truth)
+        failRetryCount++;
+        // Stop on first failure — don't batch-fail remaining orders
+        break;
+      }
     }
 
-    state = failures == 0 ? SyncState.done : SyncState.offline;
+    state = hadFailure ? SyncState.offline : SyncState.done;
+    await _refreshCount();
 
-    // Refresh provider tally after sync
-    _ref.read(pendingOrdersCountProvider.notifier).refresh();
-
-    if (failures > 0) {
-      // Schedule retry in 30 seconds
-      _retryTimer?.cancel();
-      _retryTimer = Timer(const Duration(seconds: 30), syncPendingOrders);
+    if (hadFailure) {
+      _scheduleRetry(failRetryCount);
     }
+  }
+
+  // ── Exponential backoff ────────────────────────────────────────────────────
+
+  /// delay = min(2^retryCount × 5s, 5 minutes)
+  void _scheduleRetry(int retryCount) {
+    _retryTimer?.cancel();
+    final seconds = min(pow(2, retryCount) * 5, 300).toInt();
+    _retryTimer = Timer(Duration(seconds: seconds), syncPendingOrders);
+  }
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
+
+  Future<void> _refreshCount() async {
+    final count = await _orderRepo.getPendingOrdersCount();
+    _ref.read(pendingOrdersCountProvider.notifier).setCount(count);
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _connectivitySub?.cancel();
     _retryTimer?.cancel();
     super.dispose();
   }
 }
 
+// ── Providers ─────────────────────────────────────────────────────────────────
+
 final syncProvider = StateNotifierProvider<SyncNotifier, SyncState>((ref) {
-  return SyncNotifier(OrderRepositoryImpl(ApiClient()), ref);
+  return SyncNotifier(ref.read(orderRepoProvider), ref);
 });
 
 class PendingOrdersCountNotifier extends StateNotifier<int> {
@@ -77,11 +133,10 @@ class PendingOrdersCountNotifier extends StateNotifier<int> {
     state = await _repo.getPendingOrdersCount();
   }
 
-  void setCount(int val) {
-    state = val;
-  }
+  void setCount(int val) => state = val;
 }
 
-final pendingOrdersCountProvider = StateNotifierProvider<PendingOrdersCountNotifier, int>((ref) {
-  return PendingOrdersCountNotifier(OrderRepositoryImpl(ApiClient()));
+final pendingOrdersCountProvider =
+    StateNotifierProvider<PendingOrdersCountNotifier, int>((ref) {
+  return PendingOrdersCountNotifier(ref.read(orderRepoProvider));
 });
