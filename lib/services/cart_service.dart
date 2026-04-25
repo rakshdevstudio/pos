@@ -175,6 +175,11 @@ class CartNotifier extends StateNotifier<CartState> {
     state = const CartState();
   }
 
+  void resetCart() {
+    _history.clear();
+    state = const CartState();
+  }
+
   void processCheckout() {
     invalidateHistory();
     state = const CartState();

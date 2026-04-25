@@ -12,10 +12,10 @@ import '../shared/widgets/sync_status_badge.dart';
 import 'cart_panel.dart';
 import 'product_card.dart';
 
-final _productsProvider =
-    FutureProvider.family<List<Product>, String>((ref, schoolId) async {
+final _productsProvider = FutureProvider.autoDispose
+    .family<List<Product>, String>((ref, schoolId) async {
   final repo = ref.read(productRepoProvider);
-  return repo.getProducts(schoolId);
+  return repo.fetchProducts(schoolId);
 });
 
 final _searchQueryPosProvider = StateProvider<String>((ref) => '');
@@ -32,8 +32,12 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   final _searchController = TextEditingController();
   final _barcodeController = TextEditingController();
   final _barcodeFocus = FocusNode();
-  String? _schoolId;
+  ProviderSubscription<AsyncValue<List<Product>>>? _productsSubscription;
+  String? _productScopeId;
   String? _schoolName;
+  List<Product> _products = const [];
+  bool _isLoadingProducts = false;
+  Object? _productsError;
 
   String? _lastCode;
   DateTime? _lastTime;
@@ -58,25 +62,41 @@ class _PosScreenState extends ConsumerState<PosScreen> {
 
   Future<void> _loadSchool() async {
     final prefs = await SharedPreferences.getInstance();
-    final id = _productSchoolIdFromPrefs(prefs);
-    if (id == null) {
+    final schoolId = _selectedSchoolIdFromPrefs(prefs);
+    if (schoolId == null) {
       if (mounted) context.go('/schools');
       return;
     }
+    final scopeId = schoolId;
 
-    final name = prefs.getString('selectedSchoolName') ??
-        prefs.getString('selected_school_name') ??
-        'Store';
+    final previousScopeId = _productScopeId;
+    final schoolChanged = previousScopeId != null && previousScopeId != scopeId;
+    if (schoolChanged) {
+      ref.read(cartProvider.notifier).resetCart();
+      ref.read(productRepoProvider).clearCache();
+      ref.invalidate(_productsProvider(previousScopeId));
+      ref.read(_selectedCategoryProvider.notifier).state = null;
+      ref.read(_searchQueryPosProvider.notifier).state = '';
+      _searchController.clear();
+      _barcodeController.clear();
+    }
+
+    final name = prefs.getString('selectedSchoolName') ?? 'Store';
     setState(() {
-      _schoolId = id;
+      _products = const [];
+      _isLoadingProducts = true;
+      _productsError = null;
+      _productScopeId = scopeId;
       _schoolName = name;
     });
+    print('Selected School ID: $schoolId');
+    print('Product Scope ID: $scopeId');
+    _listenToProducts(scopeId);
   }
 
-  String? _productSchoolIdFromPrefs(SharedPreferences prefs) {
-    final legacySchoolId = prefs.get('selected_school_id');
-    final selectedSchoolId = prefs.getString('selectedSchoolId') ??
-        (legacySchoolId is String ? legacySchoolId : null);
+  String? _selectedSchoolIdFromPrefs(SharedPreferences prefs) {
+    final selectedSchoolId = prefs.getString('selectedSchoolId');
+    print("Stored selectedSchoolId: $selectedSchoolId");
     return selectedSchoolId?.isNotEmpty == true ? selectedSchoolId : null;
   }
 
@@ -102,9 +122,9 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       );
     } else {
       // Find parent product
-      if (_schoolId != null) {
+      if (_productScopeId != null) {
         final products =
-            ref.read(productRepoProvider).getCachedProducts(_schoolId!);
+            ref.read(productRepoProvider).getCachedProducts(_productScopeId!);
         if (products.isEmpty) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Products are still loading')),
@@ -150,10 +170,61 @@ class _PosScreenState extends ConsumerState<PosScreen> {
 
   @override
   void dispose() {
+    _productsSubscription?.close();
     _searchController.dispose();
     _barcodeController.dispose();
     _barcodeFocus.dispose();
     super.dispose();
+  }
+
+  void _listenToProducts(String schoolId) {
+    _productsSubscription?.close();
+    final provider = _productsProvider(schoolId);
+    ref.invalidate(provider);
+    _productsSubscription = ref.listenManual<AsyncValue<List<Product>>>(
+      provider,
+      (previous, next) {
+        next.when(
+          data: (products) {
+            if (!mounted) return;
+            setState(() {
+              _products = products;
+              _isLoadingProducts = false;
+              _productsError = null;
+            });
+            print("UI PRODUCTS COUNT: ${products.length}");
+          },
+          loading: () {
+            if (!mounted) return;
+            setState(() {
+              _products = const [];
+              _isLoadingProducts = true;
+              _productsError = null;
+            });
+          },
+          error: (error, _) {
+            if (!mounted) return;
+            setState(() {
+              _products = const [];
+              _isLoadingProducts = false;
+              _productsError = error;
+            });
+          },
+        );
+      },
+      fireImmediately: true,
+    );
+  }
+
+  void _refreshProducts() {
+    final schoolId = _productScopeId;
+    if (schoolId == null) return;
+    setState(() {
+      _products = const [];
+      _isLoadingProducts = true;
+      _productsError = null;
+    });
+    _listenToProducts(schoolId);
   }
 
   @override
@@ -161,7 +232,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     return Scaffold(
       backgroundColor: AppColors.background,
       resizeToAvoidBottomInset: false,
-      body: _schoolId == null
+      body: _productScopeId == null
           ? const Center(
               child: CircularProgressIndicator(color: AppColors.accent))
           : _buildPosLayout(),
@@ -330,144 +401,54 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   }
 
   Widget _buildCategoryFilter() {
-    if (_schoolId == null) return const SizedBox.shrink();
-    final productsAsync = ref.watch(_productsProvider(_schoolId!));
-    return productsAsync.maybeWhen(
-      data: (products) {
-        final categories = products
-            .map((p) => p.category)
-            .whereType<String>()
-            .toSet()
-            .toList();
-        if (categories.isEmpty) {
-          return const SizedBox(height: AppDimens.spacingSM);
-        }
-        final selectedCat = ref.watch(_selectedCategoryProvider);
-        return SizedBox(
-          height: 44,
-          child: ListView(
-            scrollDirection: Axis.horizontal,
-            padding:
-                const EdgeInsets.symmetric(horizontal: AppDimens.spacingXXL),
-            children: [
-              _CategoryChip(
-                label: 'All',
-                isSelected: selectedCat == null,
-                onTap: () =>
-                    ref.read(_selectedCategoryProvider.notifier).state = null,
-              ),
-              ...categories.map((cat) => _CategoryChip(
-                    label: cat,
-                    isSelected: selectedCat == cat,
-                    onTap: () => ref
-                        .read(_selectedCategoryProvider.notifier)
-                        .state = cat,
-                  )),
-            ],
+    if (_productScopeId == null) return const SizedBox.shrink();
+    final categories =
+        _products.map((p) => p.category).whereType<String>().toSet().toList();
+    if (categories.isEmpty) {
+      return const SizedBox(height: AppDimens.spacingSM);
+    }
+    final selectedCat = ref.watch(_selectedCategoryProvider);
+    return SizedBox(
+      height: 44,
+      child: ListView(
+        key: ValueKey('categories_$_productScopeId'),
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: AppDimens.spacingXXL),
+        children: [
+          _CategoryChip(
+            label: 'All',
+            isSelected: selectedCat == null,
+            onTap: () =>
+                ref.read(_selectedCategoryProvider.notifier).state = null,
           ),
-        );
-      },
-      orElse: () => const SizedBox(height: AppDimens.spacingSM),
+          ...categories.map((cat) => _CategoryChip(
+                label: cat,
+                isSelected: selectedCat == cat,
+                onTap: () =>
+                    ref.read(_selectedCategoryProvider.notifier).state = cat,
+              )),
+        ],
+      ),
     );
   }
 
   Widget _buildProductGrid() {
-    if (_schoolId == null) return const SizedBox.shrink();
-    final productsAsync = ref.watch(_productsProvider(_schoolId!));
+    if (_productScopeId == null) return const SizedBox.shrink();
     final searchQuery = ref.watch(_searchQueryPosProvider);
     final selectedCat = ref.watch(_selectedCategoryProvider);
+    var filtered = _products;
+    if (searchQuery.isNotEmpty) {
+      filtered = filtered
+          .where(
+              (p) => p.name.toLowerCase().contains(searchQuery.toLowerCase()))
+          .toList();
+    }
+    if (selectedCat != null) {
+      filtered = filtered.where((p) => p.category == selectedCat).toList();
+    }
 
-    return productsAsync.when(
-      data: (products) {
-        var filtered = products;
-        if (searchQuery.isNotEmpty) {
-          filtered = filtered
-              .where((p) =>
-                  p.name.toLowerCase().contains(searchQuery.toLowerCase()))
-              .toList();
-        }
-        if (selectedCat != null) {
-          filtered = filtered.where((p) => p.category == selectedCat).toList();
-        }
-
-        if (filtered.isEmpty) {
-          return Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.search_off_rounded,
-                    color: AppColors.textDisabled, size: 40),
-                const SizedBox(height: AppDimens.spacingMD),
-                Text(
-                  searchQuery.isEmpty && selectedCat == null
-                      ? 'No products available'
-                      : 'No products found',
-                  style: AppTypography.bodyMedium.copyWith(
-                    color: AppColors.textMuted,
-                  ),
-                ),
-              ],
-            ),
-          );
-        }
-
-        return GridView.builder(
-          padding: const EdgeInsets.all(AppDimens.spacingXXL),
-          gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-            maxCrossAxisExtent: AppDimens.productCardWidth + 20,
-            crossAxisSpacing: AppDimens.spacingMD,
-            mainAxisSpacing: AppDimens.spacingMD,
-            childAspectRatio: 0.72,
-          ),
-          itemCount: filtered.length,
-          itemBuilder: (context, index) {
-            final product = filtered[index];
-            return ProductCard(
-              product: product,
-              onTap: () {
-                if (product.variants.length == 1) {
-                  final variant = product.variants.first;
-                  if (variant.stock <= 0) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Out of stock')),
-                    );
-                    return;
-                  }
-                  HapticFeedback.lightImpact();
-                  final added =
-                      ref.read(cartProvider.notifier).addItem(product, variant);
-                  if (!added) return;
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Row(
-                        children: [
-                          const Icon(Icons.check_circle_rounded,
-                              color: AppColors.success, size: 16),
-                          const SizedBox(width: AppDimens.spacingSM),
-                          Text('${product.name} added',
-                              style: AppTypography.bodySmall
-                                  .copyWith(color: AppColors.textPrimary)),
-                        ],
-                      ),
-                      duration: const Duration(seconds: 1),
-                      behavior: SnackBarBehavior.floating,
-                      backgroundColor: AppColors.surfaceElevated,
-                    ),
-                  );
-                } else {
-                  showModalBottomSheet(
-                    context: context,
-                    isScrollControlled: true,
-                    backgroundColor: Colors.transparent,
-                    builder: (_) => VariantSheet(product: product),
-                  );
-                }
-              },
-            );
-          },
-        );
-      },
-      loading: () => Center(
+    if (_isLoadingProducts) {
+      return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -484,8 +465,11 @@ class _PosScreenState extends ConsumerState<PosScreen> {
             ),
           ],
         ),
-      ),
-      error: (e, _) => Center(
+      );
+    }
+
+    if (_productsError != null) {
+      return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -499,13 +483,91 @@ class _PosScreenState extends ConsumerState<PosScreen> {
             ),
             const SizedBox(height: AppDimens.spacingMD),
             TextButton(
-              onPressed: () => ref.invalidate(_productsProvider(_schoolId!)),
+              onPressed: _refreshProducts,
               child: const Text('Retry',
                   style: TextStyle(color: AppColors.accent)),
             ),
           ],
         ),
+      );
+    }
+
+    if (filtered.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.search_off_rounded,
+                color: AppColors.textDisabled, size: 40),
+            const SizedBox(height: AppDimens.spacingMD),
+            Text(
+              searchQuery.isEmpty && selectedCat == null
+                  ? 'No products available'
+                  : 'No products found',
+              style: AppTypography.bodyMedium.copyWith(
+                color: AppColors.textMuted,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return GridView.builder(
+      key: ValueKey('products_$_productScopeId'),
+      padding: const EdgeInsets.all(AppDimens.spacingXXL),
+      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+        maxCrossAxisExtent: AppDimens.productCardWidth + 20,
+        crossAxisSpacing: AppDimens.spacingMD,
+        mainAxisSpacing: AppDimens.spacingMD,
+        childAspectRatio: 0.72,
       ),
+      itemCount: filtered.length,
+      itemBuilder: (context, index) {
+        final product = filtered[index];
+        return ProductCard(
+          product: product,
+          onTap: () {
+            if (product.variants.length == 1) {
+              final variant = product.variants.first;
+              if (variant.stock <= 0) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Out of stock')),
+                );
+                return;
+              }
+              HapticFeedback.lightImpact();
+              final added =
+                  ref.read(cartProvider.notifier).addItem(product, variant);
+              if (!added) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Row(
+                    children: [
+                      const Icon(Icons.check_circle_rounded,
+                          color: AppColors.success, size: 16),
+                      const SizedBox(width: AppDimens.spacingSM),
+                      Text('${product.name} added',
+                          style: AppTypography.bodySmall
+                              .copyWith(color: AppColors.textPrimary)),
+                    ],
+                  ),
+                  duration: const Duration(seconds: 1),
+                  behavior: SnackBarBehavior.floating,
+                  backgroundColor: AppColors.surfaceElevated,
+                ),
+              );
+            } else {
+              showModalBottomSheet(
+                context: context,
+                isScrollControlled: true,
+                backgroundColor: Colors.transparent,
+                builder: (_) => VariantSheet(product: product),
+              );
+            }
+          },
+        );
+      },
     );
   }
 }

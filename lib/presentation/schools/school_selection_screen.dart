@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/constants/constants.dart';
 import '../../core/providers/providers.dart';
 import '../../domain/models/models.dart';
+import '../../services/cart_service.dart';
 import '../shared/widgets/sync_status_badge.dart';
 
 final _schoolsProvider = FutureProvider<List<School>>((ref) async {
@@ -182,19 +183,29 @@ class SchoolSelectionScreen extends ConsumerWidget {
                       school: school,
                       isSelected: isSelected,
                       onTap: () async {
+                        final selectedSchoolId = school.id;
+                        print("UI Selected School:");
+                        print("Name: ${school.name}");
+                        print("ID: ${school.id}");
+                        print("Type: ${school.id.runtimeType}");
                         ref.read(_selectedSchoolProvider.notifier).state =
                             school;
+                        ref.read(cartProvider.notifier).resetCart();
+                        ref.read(productRepoProvider).clearCache();
                         // Persist selection
                         final prefs = await SharedPreferences.getInstance();
                         final branchId = school.branchId ?? '';
-                        await prefs.setString('selectedSchoolId', school.id);
+                        await prefs.setString(
+                          'selectedSchoolId',
+                          selectedSchoolId,
+                        );
+                        print("Stored selectedSchoolId: $selectedSchoolId");
                         await prefs.setString('selectedBranchId', branchId);
-                        await prefs.setString('selected_school_id', school.id);
-                        await prefs.setString('selected_branch_id', branchId);
                         await prefs.setString(
                             'selectedSchoolName', school.name);
-                        await prefs.setString(
-                            'selected_school_name', school.name);
+                        await prefs.remove('selected_school_id');
+                        await prefs.remove('selected_branch_id');
+                        await prefs.remove('selected_school_name');
                         if (context.mounted) {
                           context.go('/pos');
                         }

@@ -114,14 +114,8 @@ class _CheckoutSheetState extends ConsumerState<CheckoutSheet> {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('last_payment_method', payment.name);
-      final legacySchoolId = prefs.get('selected_school_id');
-      final legacyBranchId = prefs.get('selected_branch_id');
-      final schoolId = prefs.getString('selectedSchoolId') ??
-          (legacySchoolId is String ? legacySchoolId : null) ??
-          '';
-      final branchId = prefs.getString('selectedBranchId') ??
-          (legacyBranchId is String ? legacyBranchId : null) ??
-          '';
+      final schoolId = prefs.getString('selectedSchoolId') ?? '';
+      final branchId = prefs.getString('selectedBranchId') ?? '';
       if (schoolId.isEmpty || branchId.isEmpty) {
         throw StateError('School selection is missing');
       }

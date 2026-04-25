@@ -24,7 +24,16 @@ class _ProductCardState extends State<ProductCard> {
 
   @override
   Widget build(BuildContext context) {
-    final canPurchase = widget.product.hasPurchasableVariant;
+    final variantStocks = widget.product.variants.map((v) => v.stock).toList();
+    print('PRODUCT: ${widget.product.name}');
+    print('VARIANT STOCKS: $variantStocks');
+
+    final totalStock = widget.product.variants.fold<int>(
+      0,
+      (sum, v) => sum + v.stock,
+    );
+    final isOutOfStock = totalStock <= 0;
+    final canPurchase = widget.product.variants.any((v) => v.stock > 0);
     return MouseRegion(
       onEnter: (_) => setState(() => _isHovered = true),
       onExit: (_) => setState(() => _isHovered = false),
@@ -75,8 +84,8 @@ class _ProductCardState extends State<ProductCard> {
                       bottom: AppDimens.spacingMD,
                       left: AppDimens.spacingMD,
                       child: _StockBadge(
-                        label: _stockLabel(widget.product),
-                        available: canPurchase,
+                        label: isOutOfStock ? 'Out of stock' : 'In stock',
+                        available: !isOutOfStock,
                       ),
                     ),
                     Positioned(
@@ -174,12 +183,6 @@ class _ProductCardState extends State<ProductCard> {
         ),
       ),
     );
-  }
-
-  String _stockLabel(Product product) {
-    final totalStock = product.variants.fold<int>(0, (sum, v) => sum + v.stock);
-    if (totalStock <= 0) return 'Out of stock';
-    return '$totalStock in stock';
   }
 }
 
@@ -380,7 +383,7 @@ class _VariantTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final canAdd = variant.stock > 0;
+    final canAdd = (variant.stock) > 0;
     return Container(
       margin: const EdgeInsets.symmetric(
         horizontal: AppDimens.spacingXXL,
@@ -450,6 +453,6 @@ class _VariantTile extends StatelessWidget {
 
   String _stockText(Variant variant) {
     if (variant.stock <= 0) return 'Out of stock';
-    return '${variant.stock} in stock';
+    return 'In stock';
   }
 }
