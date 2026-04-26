@@ -82,6 +82,7 @@ class _CheckoutSheetState extends ConsumerState<CheckoutSheet> {
   Future<void> _finalizeOrder({double? tenderedAmount}) async {
     final cart = ref.read(cartProvider);
     final payment = ref.read(_selectedPaymentProvider) ?? PaymentMethod.cash;
+    final repo = ref.read(orderRepoProvider);
 
     final stockIssue = cart.items.where((item) =>
         item.variant.stock <= 0 || item.quantity > item.variant.stock);
@@ -110,6 +111,8 @@ class _CheckoutSheetState extends ConsumerState<CheckoutSheet> {
 
     ref.read(_orderPlacingProvider.notifier).state = true;
     HapticFeedback.mediumImpact();
+    Order? pendingOrder;
+    var savedLocally = false;
 
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -120,7 +123,7 @@ class _CheckoutSheetState extends ConsumerState<CheckoutSheet> {
         throw StateError('School selection is missing');
       }
 
-      final order = Order(
+      pendingOrder = Order(
         offlineId: const Uuid().v4(),
         customer: widget.customer,
         schoolId: schoolId,
@@ -132,14 +135,20 @@ class _CheckoutSheetState extends ConsumerState<CheckoutSheet> {
         createdAt: DateTime.now(),
       );
 
-      // Use provider singleton — no direct instantiation
-      final repo = ref.read(orderRepoProvider);
+      final newCount = await repo.saveOrderLocally(pendingOrder);
+      savedLocally = true;
+      ref.read(pendingOrdersCountProvider.notifier).setCount(newCount);
+
       await repo.applyInventoryMovements(
         items: cart.items,
         branchId: branchId,
+        schoolId: schoolId,
+        customerName: widget.customer.name ?? 'Walk-in Customer',
+        customerPhone:
+            widget.customer.isWalkIn ? 'Walk-In' : widget.customer.phone,
+        customerAddress: widget.customer.address ?? 'Walk-in Customer',
+        orderId: pendingOrder.offlineId,
       );
-      final newCount = await repo.saveOrderLocally(order);
-      ref.read(pendingOrdersCountProvider.notifier).setCount(newCount);
 
       // Non-blocking sync attempt
       ref.read(syncProvider.notifier).syncPendingOrders();
@@ -150,7 +159,16 @@ class _CheckoutSheetState extends ConsumerState<CheckoutSheet> {
       if (mounted) {
         _showSuccessSheet(total: cart.total, tenderedAmount: tenderedAmount);
       }
-    } catch (_) {
+    } catch (e) {
+      print('CHECKOUT ERROR: $e');
+      if (savedLocally && pendingOrder != null) {
+        try {
+          final newCount = await repo.deleteLocalOrder(pendingOrder.offlineId);
+          ref.read(pendingOrdersCountProvider.notifier).setCount(newCount);
+        } catch (rollbackError) {
+          print('CHECKOUT ERROR: local rollback failed: $rollbackError');
+        }
+      }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(

@@ -118,6 +118,26 @@ class DatabaseHelper {
     return Sqf.firstIntValue(result) ?? 0;
   }
 
+  Future<Map<String, dynamic>?> getOrder(String offlineId) async {
+    final db = await database;
+    final rows = await db.query(
+      'orders',
+      where: 'offline_id = ?',
+      whereArgs: [offlineId],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.first;
+  }
+
+  Future<void> deleteOrder(String offlineId) async {
+    final db = await database;
+    await db.delete(
+      'orders',
+      where: 'offline_id = ?',
+      whereArgs: [offlineId],
+    );
+  }
+
   Future<void> markSynced(String offlineId, int? remoteId) async {
     final db = await database;
     await db.update(

@@ -234,137 +234,151 @@ class VariantSheet extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final variants = product.variants;
-    return Container(
-      decoration: const BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.vertical(
-          top: Radius.circular(AppDimens.radiusXXL),
+    final mediaQuery = MediaQuery.of(context);
+    final maxSheetHeight = mediaQuery.size.height * 0.88;
+
+    return SafeArea(
+      top: false,
+      child: Container(
+        constraints: BoxConstraints(maxHeight: maxSheetHeight),
+        decoration: const BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.vertical(
+            top: Radius.circular(AppDimens.radiusXXL),
+          ),
         ),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Handle
-          Center(
-            child: Container(
-              margin: const EdgeInsets.only(top: AppDimens.spacingMD),
-              width: 36,
-              height: 4,
-              decoration: BoxDecoration(
-                color: AppColors.borderFocus,
-                borderRadius: BorderRadius.circular(AppDimens.radiusFull),
+        child: Column(
+          children: [
+            // Handle
+            Center(
+              child: Container(
+                margin: const EdgeInsets.only(top: AppDimens.spacingMD),
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: AppColors.borderFocus,
+                  borderRadius: BorderRadius.circular(AppDimens.radiusFull),
+                ),
               ),
             ),
-          ),
 
-          // Product header
-          Padding(
-            padding: const EdgeInsets.fromLTRB(
-              AppDimens.spacingXXL,
-              AppDimens.spacingXL,
-              AppDimens.spacingXXL,
-              0,
-            ),
-            child: Row(
-              children: [
-                if (product.imageUrl != null)
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(AppDimens.radiusMD),
-                    child: CachedNetworkImage(
-                      imageUrl: product.imageUrl!,
-                      width: 56,
-                      height: 56,
-                      fit: BoxFit.cover,
-                      errorWidget: (_, __, ___) => Container(
+            // Product header
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                AppDimens.spacingXXL,
+                AppDimens.spacingXL,
+                AppDimens.spacingXXL,
+                0,
+              ),
+              child: Row(
+                children: [
+                  if (product.imageUrl != null)
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(AppDimens.radiusMD),
+                      child: CachedNetworkImage(
+                        imageUrl: product.imageUrl!,
                         width: 56,
                         height: 56,
-                        color: AppColors.surfaceElevated,
-                        child: const Icon(Icons.checkroom_outlined,
-                            color: AppColors.textMuted),
+                        fit: BoxFit.cover,
+                        errorWidget: (_, __, ___) => Container(
+                          width: 56,
+                          height: 56,
+                          color: AppColors.surfaceElevated,
+                          child: const Icon(Icons.checkroom_outlined,
+                              color: AppColors.textMuted),
+                        ),
                       ),
                     ),
-                  ),
-                if (product.imageUrl != null)
-                  const SizedBox(width: AppDimens.spacingMD),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        product.name,
-                        style: AppTypography.headlineSmall.copyWith(
-                          color: AppColors.textPrimary,
-                        ),
-                      ),
-                      if (product.category != null) ...[
-                        const SizedBox(height: 2),
+                  if (product.imageUrl != null)
+                    const SizedBox(width: AppDimens.spacingMD),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
                         Text(
-                          product.category!,
-                          style: AppTypography.bodySmall.copyWith(
-                            color: AppColors.textMuted,
+                          product.name,
+                          style: AppTypography.headlineSmall.copyWith(
+                            color: AppColors.textPrimary,
                           ),
                         ),
-                      ],
-                    ],
-                  ),
-                ),
-                IconButton(
-                  onPressed: () => Navigator.pop(context),
-                  icon: const Icon(Icons.close_rounded,
-                      color: AppColors.textMuted),
-                ),
-              ],
-            ),
-          ),
-
-          const SizedBox(height: AppDimens.spacingXL),
-          Padding(
-            padding:
-                const EdgeInsets.symmetric(horizontal: AppDimens.spacingXXL),
-            child: Text(
-              AppStrings.selectVariant,
-              style: AppTypography.bodySmall.copyWith(
-                color: AppColors.textMuted,
-                letterSpacing: 1,
-              ),
-            ),
-          ),
-          const SizedBox(height: AppDimens.spacingMD),
-
-          // Variants list
-          ...variants.map((variant) => _VariantTile(
-                product: product,
-                variant: variant,
-                onAdd: () {
-                  final added =
-                      ref.read(cartProvider.notifier).addItem(product, variant);
-                  if (!added) return;
-                  Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Row(
-                        children: [
-                          const Icon(Icons.check_circle_rounded,
-                              color: AppColors.success, size: 16),
-                          const SizedBox(width: AppDimens.spacingSM),
+                        if (product.category != null) ...[
+                          const SizedBox(height: 2),
                           Text(
-                            '${product.name} (${variant.size}) added',
+                            product.category!,
                             style: AppTypography.bodySmall.copyWith(
-                              color: AppColors.textPrimary,
+                              color: AppColors.textMuted,
                             ),
                           ),
                         ],
-                      ),
-                      duration: const Duration(seconds: 2),
+                      ],
                     ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close_rounded,
+                        color: AppColors.textMuted),
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: AppDimens.spacingXL),
+            Padding(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: AppDimens.spacingXXL),
+              child: Text(
+                AppStrings.selectVariant,
+                style: AppTypography.bodySmall.copyWith(
+                  color: AppColors.textMuted,
+                  letterSpacing: 1,
+                ),
+              ),
+            ),
+            const SizedBox(height: AppDimens.spacingMD),
+
+            // Variants list
+            Expanded(
+              child: ListView.builder(
+                padding: EdgeInsets.only(
+                  bottom: mediaQuery.padding.bottom + AppDimens.spacingXL,
+                ),
+                itemCount: variants.length,
+                itemBuilder: (context, index) {
+                  final variant = variants[index];
+                  return _VariantTile(
+                    product: product,
+                    variant: variant,
+                    onAdd: () {
+                      final added = ref
+                          .read(cartProvider.notifier)
+                          .addItem(product, variant);
+                      if (!added) return;
+                      Navigator.pop(context);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Row(
+                            children: [
+                              const Icon(Icons.check_circle_rounded,
+                                  color: AppColors.success, size: 16),
+                              const SizedBox(width: AppDimens.spacingSM),
+                              Text(
+                                '${product.name} (${variant.size}) added',
+                                style: AppTypography.bodySmall.copyWith(
+                                  color: AppColors.textPrimary,
+                                ),
+                              ),
+                            ],
+                          ),
+                          duration: const Duration(seconds: 2),
+                        ),
+                      );
+                    },
                   );
                 },
-              )),
-
-          SizedBox(
-              height:
-                  MediaQuery.of(context).padding.bottom + AppDimens.spacingXL),
-        ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

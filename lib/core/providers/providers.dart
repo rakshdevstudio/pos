@@ -12,12 +12,9 @@ final apiClientProvider = Provider<ApiClient>((_) => ApiClient());
 /// Singleton DatabaseHelper — one SQLite connection.
 final dbProvider = Provider<DatabaseHelper>((_) => DatabaseHelper.instance);
 
-/// Order repository — uses single ApiClient + DB instances.
+/// Order repository — uses single DB instance.
 final orderRepoProvider = Provider<OrderRepositoryImpl>((ref) {
-  return OrderRepositoryImpl(
-    ref.read(apiClientProvider),
-    ref.read(dbProvider),
-  );
+  return OrderRepositoryImpl(ref.read(dbProvider));
 });
 
 /// Product repository — singleton preserves in-memory SKU index.
