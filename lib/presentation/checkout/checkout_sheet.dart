@@ -118,6 +118,7 @@ class _CheckoutSheetState extends ConsumerState<CheckoutSheet> {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('last_payment_method', payment.name);
       final schoolId = prefs.getString('selectedSchoolId') ?? '';
+      final schoolName = prefs.getString('selectedSchoolName') ?? 'Store';
       final branchId = prefs.getString('selectedBranchId') ?? '';
       if (schoolId.isEmpty || branchId.isEmpty) {
         throw StateError('School selection is missing');
@@ -143,10 +144,23 @@ class _CheckoutSheetState extends ConsumerState<CheckoutSheet> {
         items: cart.items,
         branchId: branchId,
         schoolId: schoolId,
-        customerName: widget.customer.name ?? 'Walk-in Customer',
-        customerPhone:
-            widget.customer.isWalkIn ? 'Walk-In' : widget.customer.phone,
-        customerAddress: widget.customer.address ?? 'Walk-in Customer',
+        schoolName: schoolName,
+        customerName: _customerNameForOrder(widget.customer),
+        customerPhone: _trimToNull(widget.customer.phone),
+        alternatePhone: _trimToNull(widget.customer.alternatePhone),
+        customerEmail: null,
+        customerAddress: _trimToNull(widget.customer.address) ?? '-',
+        city: _trimToNull(widget.customer.city),
+        pincode: _trimToNull(widget.customer.pincode),
+        studentName: _trimToNull(widget.customer.studentName),
+        grade: _trimToNull(widget.customer.grade) ??
+            _trimToNull(widget.customer.studentClass),
+        className: _trimToNull(widget.customer.className) ??
+            _trimToNull(widget.customer.studentClass),
+        source: 'pos',
+        orderChannel: 'offline',
+        customerType: 'walk_in',
+        status: 'Placed',
         orderId: pendingOrder.offlineId,
       );
 
@@ -183,6 +197,21 @@ class _CheckoutSheetState extends ConsumerState<CheckoutSheet> {
         ref.read(_orderPlacingProvider.notifier).state = false;
       }
     }
+  }
+
+  String _customerNameForOrder(CustomerInfo customer) {
+    final enteredName = _trimToNull(customer.name);
+    if (enteredName != null) return enteredName;
+
+    final enteredStudentName = _trimToNull(customer.studentName);
+    if (enteredStudentName != null) return enteredStudentName;
+
+    return 'Walk-in Customer';
+  }
+
+  String? _trimToNull(String? value) {
+    final trimmed = value?.trim() ?? '';
+    return trimmed.isEmpty ? null : trimmed;
   }
 
   void _showSuccessSheet({required double total, double? tenderedAmount}) {

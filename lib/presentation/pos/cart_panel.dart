@@ -13,7 +13,9 @@ import 'numpad_sheet.dart';
 final _currencyFmt = NumberFormat('#,##0', 'en_IN');
 
 class CartPanel extends ConsumerStatefulWidget {
-  const CartPanel({super.key});
+  final bool compactMobile;
+
+  const CartPanel({super.key, this.compactMobile = false});
 
   @override
   ConsumerState<CartPanel> createState() => _CartPanelState();
@@ -48,6 +50,10 @@ class _CartPanelState extends ConsumerState<CartPanel> {
     });
 
     final cart = ref.watch(cartProvider);
+
+    if (widget.compactMobile) {
+      return _buildCompactMobilePanel(cart);
+    }
 
     return Container(
       width: double.infinity,
@@ -162,17 +168,137 @@ class _CartPanelState extends ConsumerState<CartPanel> {
     );
   }
 
-  Widget _emptyCart() {
+  Widget _buildCompactMobilePanel(CartState cart) {
+    final hasItems = cart.items.isNotEmpty;
+
+    return Container(
+      width: double.infinity,
+      decoration: const BoxDecoration(
+        color: AppColors.cartBg,
+        border: Border(
+          top: BorderSide(color: AppColors.border),
+          bottom: BorderSide(color: AppColors.border),
+        ),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppDimens.spacingLG,
+              vertical: AppDimens.spacingMD,
+            ),
+            decoration: const BoxDecoration(
+              border: Border(
+                bottom: BorderSide(color: AppColors.border),
+              ),
+            ),
+            child: Row(
+              children: [
+                Text(
+                  AppStrings.cart,
+                  style: AppTypography.titleLarge.copyWith(
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                const Spacer(),
+                if (hasItems)
+                  TextButton(
+                    onPressed: () {
+                      showDialog(
+                        context: context,
+                        builder: (_) => AlertDialog(
+                          backgroundColor: AppColors.surface,
+                          shape: RoundedRectangleBorder(
+                            borderRadius:
+                                BorderRadius.circular(AppDimens.radiusLG),
+                          ),
+                          title: Text(
+                            'Clear Cart?',
+                            style: AppTypography.headlineSmall.copyWith(
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                          content: Text(
+                            'All items will be removed.',
+                            style: AppTypography.bodyMedium.copyWith(
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.pop(context),
+                              child: const Text('Cancel'),
+                            ),
+                            TextButton(
+                              onPressed: () {
+                                ref.read(cartProvider.notifier).clearCart();
+                                Navigator.pop(context);
+                              },
+                              child: const Text(
+                                'Clear',
+                                style: TextStyle(color: AppColors.error),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                    child: Text(
+                      'Clear',
+                      style: AppTypography.bodySmall.copyWith(
+                        color: AppColors.textMuted,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          if (hasItems)
+            ListView.separated(
+              controller: _scrollController,
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              padding: const EdgeInsets.symmetric(
+                vertical: AppDimens.spacingSM,
+              ),
+              itemCount: cart.items.length,
+              separatorBuilder: (_, __) => const Divider(
+                color: AppColors.border,
+                height: 1,
+                indent: AppDimens.spacingLG,
+                endIndent: AppDimens.spacingLG,
+              ),
+              itemBuilder: (context, index) {
+                final itemKey = cart.items[index].key;
+                return _CartItemTile(itemId: itemKey, compactMobile: true);
+              },
+            )
+          else
+            Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppDimens.spacingLG,
+                vertical: AppDimens.spacingXL,
+              ),
+              child: _emptyCart(compact: true),
+            ),
+          _CartFooter(cart: cart, compactMobile: true),
+        ],
+      ),
+    );
+  }
+
+  Widget _emptyCart({bool compact = false}) {
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           const Icon(
             Icons.shopping_bag_outlined,
-            size: 48,
+            size: 40,
             color: AppColors.textDisabled,
           ),
-          const SizedBox(height: AppDimens.spacingMD),
+          SizedBox(height: compact ? AppDimens.spacingSM : AppDimens.spacingMD),
           Text(
             AppStrings.emptyCart,
             style: AppTypography.titleMedium.copyWith(
@@ -195,8 +321,9 @@ class _CartPanelState extends ConsumerState<CartPanel> {
 
 class _CartItemTile extends ConsumerWidget {
   final String itemId;
+  final bool compactMobile;
 
-  const _CartItemTile({required this.itemId});
+  const _CartItemTile({required this.itemId, this.compactMobile = false});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -247,9 +374,10 @@ class _CartItemTile extends ConsumerWidget {
               color: AppColors.background),
         ),
         child: Padding(
-          padding: const EdgeInsets.symmetric(
-            horizontal: AppDimens.spacingXXL,
-            vertical: AppDimens.spacingMD,
+          padding: EdgeInsets.symmetric(
+            horizontal:
+                compactMobile ? AppDimens.spacingLG : AppDimens.spacingXXL,
+            vertical: compactMobile ? AppDimens.spacingSM : AppDimens.spacingMD,
           ),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -407,8 +535,9 @@ class _QtyButton extends StatelessWidget {
 
 class _CartFooter extends ConsumerWidget {
   final CartState cart;
+  final bool compactMobile;
 
-  const _CartFooter({required this.cart});
+  const _CartFooter({required this.cart, this.compactMobile = false});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -419,7 +548,9 @@ class _CartFooter extends ConsumerWidget {
       decoration: const BoxDecoration(
         border: Border(top: BorderSide(color: AppColors.border)),
       ),
-      padding: const EdgeInsets.all(AppDimens.spacingXXL),
+      padding: EdgeInsets.all(
+        compactMobile ? AppDimens.spacingLG : AppDimens.spacingXXL,
+      ),
       child: Column(
         children: [
           // Subtotal
@@ -480,14 +611,16 @@ class _CartFooter extends ConsumerWidget {
                 '₹${_currencyFmt.format(cart.total)}',
                 style: AppTypography.monoPrice.copyWith(
                   color: AppColors.accent,
-                  fontSize: 36,
+                  fontSize: compactMobile ? 30 : 36,
                   fontWeight: FontWeight.w800,
                 ),
               ),
             ],
           ),
 
-          const SizedBox(height: AppDimens.spacingXL),
+          SizedBox(
+              height:
+                  compactMobile ? AppDimens.spacingLG : AppDimens.spacingXL),
 
           // Checkout button
           AnimatedOpacity(
@@ -496,7 +629,7 @@ class _CartFooter extends ConsumerWidget {
             child: IllumeButton(
               label: '${AppStrings.checkout.toUpperCase()} · ${cart.itemCount}',
               icon: Icons.point_of_sale_rounded,
-              height: AppDimens.buttonHeightLG,
+              height: compactMobile ? 52 : AppDimens.buttonHeightLG,
               onPressed: cart.items.isEmpty || hasStockIssue
                   ? null
                   : () async {

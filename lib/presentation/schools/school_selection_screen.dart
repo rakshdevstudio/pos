@@ -19,6 +19,92 @@ final _searchQueryProvider = StateProvider<String>((ref) => '');
 class SchoolSelectionScreen extends ConsumerWidget {
   const SchoolSelectionScreen({super.key});
 
+  Future<void> _handleSchoolSelection(
+    BuildContext context,
+    WidgetRef ref,
+    School school,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!context.mounted) return;
+    final currentSchoolId = prefs.getString('selectedSchoolId');
+    final schoolChanged = currentSchoolId != null &&
+        currentSchoolId.isNotEmpty &&
+        currentSchoolId != school.id;
+
+    if (schoolChanged && ref.read(cartProvider).items.isNotEmpty) {
+      final shouldContinue = await _confirmSchoolSwitch(context);
+      if (shouldContinue != true || !context.mounted) {
+        return;
+      }
+    }
+
+    debugPrint('UI Selected School: ${school.name} (${school.id})');
+    ref.read(_selectedSchoolProvider.notifier).state = school;
+
+    if (schoolChanged) {
+      ref.read(cartProvider.notifier).resetCart();
+    }
+    if (schoolChanged || currentSchoolId == null || currentSchoolId.isEmpty) {
+      ref.read(productRepoProvider).clearCache();
+    }
+
+    final branchId = school.branchId ?? '';
+    await prefs.setString('selectedSchoolId', school.id);
+    await prefs.setString('selectedBranchId', branchId);
+    await prefs.setString('selectedSchoolName', school.name);
+    await prefs.remove('selected_school_id');
+    await prefs.remove('selected_branch_id');
+    await prefs.remove('selected_school_name');
+
+    if (context.mounted) {
+      context.go('/pos');
+    }
+  }
+
+  Future<bool?> _confirmSchoolSwitch(BuildContext context) {
+    return showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          backgroundColor: AppColors.surface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppDimens.radiusLG),
+            side: const BorderSide(color: AppColors.border),
+          ),
+          title: Text(
+            'Clear current cart?',
+            style: AppTypography.titleMedium.copyWith(
+              color: AppColors.textPrimary,
+            ),
+          ),
+          content: Text(
+            'Switching schools will clear the current cart before loading the new school.',
+            style: AppTypography.bodyMedium.copyWith(
+              color: AppColors.textSecondary,
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text(
+                'Cancel',
+                style: TextStyle(color: AppColors.textMuted),
+              ),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: AppColors.accent,
+                foregroundColor: AppColors.background,
+              ),
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Continue'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final schoolsAsync = ref.watch(_schoolsProvider);
@@ -182,34 +268,7 @@ class SchoolSelectionScreen extends ConsumerWidget {
                     return _SchoolCard(
                       school: school,
                       isSelected: isSelected,
-                      onTap: () async {
-                        final selectedSchoolId = school.id;
-                        print("UI Selected School:");
-                        print("Name: ${school.name}");
-                        print("ID: ${school.id}");
-                        print("Type: ${school.id.runtimeType}");
-                        ref.read(_selectedSchoolProvider.notifier).state =
-                            school;
-                        ref.read(cartProvider.notifier).resetCart();
-                        ref.read(productRepoProvider).clearCache();
-                        // Persist selection
-                        final prefs = await SharedPreferences.getInstance();
-                        final branchId = school.branchId ?? '';
-                        await prefs.setString(
-                          'selectedSchoolId',
-                          selectedSchoolId,
-                        );
-                        print("Stored selectedSchoolId: $selectedSchoolId");
-                        await prefs.setString('selectedBranchId', branchId);
-                        await prefs.setString(
-                            'selectedSchoolName', school.name);
-                        await prefs.remove('selected_school_id');
-                        await prefs.remove('selected_branch_id');
-                        await prefs.remove('selected_school_name');
-                        if (context.mounted) {
-                          context.go('/pos');
-                        }
-                      },
+                      onTap: () => _handleSchoolSelection(context, ref, school),
                     );
                   },
                 );

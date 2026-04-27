@@ -40,19 +40,52 @@ class Order {
         'customer': {
           'phone': customer.isWalkIn ? null : customer.phone,
           'name': customer.name,
+          'alternate_phone': customer.alternatePhone,
+          'address': customer.address,
+          'city': customer.city,
+          'pincode': customer.pincode,
           'is_walk_in': customer.isWalkIn,
         },
         'student': {
           'name': customer.studentName,
           'class': customer.studentClass,
+          'class_name': customer.className ?? customer.studentClass,
+          'grade': customer.grade ?? customer.studentClass,
         },
         'items': items
             .map((i) => {
                   'product_id': i.product.id,
                   'variant_id': i.variant.id,
+                  'product_name': i.product.name,
+                  'variant_name': i.variant.name.startsWith('Size ')
+                      ? i.variant.name
+                      : 'Size ${i.variant.name}',
+                  'size': i.variant.name,
+                  'sku': i.variant.sku,
+                  'school_id': i.product.schoolId,
+                  'school_name': null,
+                  'category': i.product.category,
+                  'image_url': i.product.imageUrl,
                   'quantity': i.quantity,
                   'price': i.variant.price,
+                  'unit_price': i.variant.price,
                   'line_total': i.lineTotal,
+                  'name':
+                      '${i.product.name} (${i.variant.name.startsWith('Size ') ? i.variant.name : 'Size ${i.variant.name}'})',
+                  'title':
+                      '${i.product.name} (${i.variant.name.startsWith('Size ') ? i.variant.name : 'Size ${i.variant.name}'})',
+                  'display_name':
+                      '${i.product.name} (${i.variant.name.startsWith('Size ') ? i.variant.name : 'Size ${i.variant.name}'})',
+                  'product_snapshot': {
+                    'product_name': i.product.name,
+                    'variant_name': i.variant.name.startsWith('Size ')
+                        ? i.variant.name
+                        : 'Size ${i.variant.name}',
+                    'size': i.variant.name,
+                    'school_name': null,
+                    'image_url': i.product.imageUrl,
+                    'sku': i.variant.sku,
+                  },
                 })
             .toList(),
         'subtotal': subtotal,

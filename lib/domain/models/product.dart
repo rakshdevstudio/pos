@@ -3,6 +3,8 @@ import 'variant.dart';
 class Product {
   final String id;
   final String schoolId;
+  final String? classId;
+  final String? gender;
   final String name;
   final String? description;
   final String? imageUrl;
@@ -14,6 +16,8 @@ class Product {
   const Product({
     required this.id,
     required this.schoolId,
+    this.classId,
+    this.gender,
     required this.name,
     this.description,
     this.imageUrl,
@@ -46,6 +50,8 @@ class Product {
     return Product(
       id: _asString(json['id']),
       schoolId: _asString(json['school_id']),
+      classId: _asNullableString(json['class_id']),
+      gender: _asNullableString(json['gender']),
       name: _asString(json['name']),
       description: _asNullableString(json['description']),
       imageUrl: _asNullableString(json['image_url']),
@@ -59,6 +65,8 @@ class Product {
   Map<String, dynamic> toJson() => {
         'id': id,
         'school_id': schoolId,
+        'class_id': classId,
+        'gender': gender,
         'name': name,
         'description': description,
         'image_url': imageUrl,

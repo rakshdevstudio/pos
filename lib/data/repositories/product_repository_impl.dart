@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:dio/dio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -15,7 +16,8 @@ class ProductRepositoryImpl implements ProductRepository {
 
   final Map<String, List<Product>> _productCache = {};
   final Map<String, DateTime> _cachedAt = {};
-  final Map<String, Variant> _barcodeIndex = {};
+  final Map<String, ProductBarcodeMatch> _barcodeMatchCache = {};
+  final Map<String, Variant> _legacyBarcodeIndex = {};
 
   ProductRepositoryImpl({Dio? dio})
       : _dio = dio ??
@@ -31,54 +33,65 @@ class ProductRepositoryImpl implements ProductRepository {
             );
 
   @override
-  Future<List<Product>> getProducts(String schoolId) async {
-    final cached = _productCache[schoolId];
-    final cachedAt = _cachedAt[schoolId];
+  Future<List<Product>> getProducts({
+    required String schoolId,
+    String? classId,
+    String? gender,
+  }) async {
+    final key = _cacheKey(
+      schoolId: schoolId,
+      classId: classId,
+      gender: gender,
+    );
+    final cached = _productCache[key];
+    final cachedAt = _cachedAt[key];
     if (cached != null &&
         cachedAt != null &&
         DateTime.now().difference(cachedAt) < _cacheTtl) {
       return cached;
     }
 
-    return fetchProducts(schoolId);
+    return fetchProducts(
+      schoolId: schoolId,
+      classId: classId,
+      gender: gender,
+    );
   }
 
   @override
-  Future<List<Product>> fetchProducts(String schoolId) async {
+  Future<List<Product>> fetchProducts({
+    required String schoolId,
+    String? classId,
+    String? gender,
+  }) async {
     final scopedSchoolId = schoolId.trim();
-    print("API CALL → school_id: $schoolId");
-    print("FULL URL:");
-    print(
-      "https://rkbkorssqydpetilwltc.supabase.co/functions/v1/get-products?school_id=$scopedSchoolId",
+    final scopedClassId = classId?.trim();
+    final normalizedGender = _normalizeGenderFilter(gender);
+
+    debugPrint(
+      '[POS Products] school=$scopedSchoolId class=${scopedClassId ?? '-'} gender=${normalizedGender ?? 'All'}',
     );
-    if (scopedSchoolId.length < 30) {
-      print("❌ INVALID SCHOOL ID (NOT UUID): $schoolId");
-    }
-    try {
-      final response = await _dio.get(
-        _productsUrl,
-        queryParameters: {'school_id': scopedSchoolId},
-      );
 
-      final products = _parseProducts(response.data, scopedSchoolId);
-      if (scopedSchoolId.isNotEmpty && products.isEmpty) {
-        final fallbackProducts = await _fetchProductsFromRest(scopedSchoolId);
-        if (fallbackProducts.isNotEmpty) {
-          _setCache(scopedSchoolId, fallbackProducts);
-          return fallbackProducts;
-        }
-      }
-
-      _setCache(scopedSchoolId, products);
-      return products;
-    } on DioException catch (error) {
-      print(
-        'Edge function failed for school_id $scopedSchoolId: ${error.response?.statusCode}',
-      );
-      final fallbackProducts = await _fetchProductsFromRest(scopedSchoolId);
-      _setCache(scopedSchoolId, fallbackProducts);
-      return fallbackProducts;
+    if (scopedSchoolId.isEmpty) {
+      return const [];
     }
+
+    if (scopedClassId != null && scopedClassId.isNotEmpty) {
+      final filteredProducts = await _fetchProductsFromRest(
+        schoolId: scopedSchoolId,
+        classId: scopedClassId,
+        gender: normalizedGender,
+      );
+      _setCache(
+        schoolId: scopedSchoolId,
+        classId: scopedClassId,
+        gender: normalizedGender,
+        products: filteredProducts,
+      );
+      return filteredProducts;
+    }
+
+    return _fetchAllSchoolProducts(scopedSchoolId);
   }
 
   List<dynamic> _extractProducts(dynamic data) {
@@ -91,51 +104,128 @@ class ProductRepositoryImpl implements ProductRepository {
     throw const FormatException('Unexpected products response');
   }
 
-  void _setCache(String schoolId, List<Product> products) {
-    _productCache[schoolId] = products;
-    _cachedAt[schoolId] = DateTime.now();
+  Future<List<Product>> _fetchAllSchoolProducts(String schoolId) async {
+    debugPrint('API CALL -> school_id: $schoolId');
+    try {
+      final response = await _dio.get(
+        _productsUrl,
+        queryParameters: {'school_id': schoolId},
+      );
 
-    _barcodeIndex.clear();
+      final products = _parseProducts(response.data, schoolId);
+      if (products.isEmpty) {
+        final fallbackProducts = await _fetchProductsFromRest(
+          schoolId: schoolId,
+        );
+        if (fallbackProducts.isNotEmpty) {
+          _setCache(schoolId: schoolId, products: fallbackProducts);
+          return fallbackProducts;
+        }
+      }
+
+      _setCache(schoolId: schoolId, products: products);
+      return products;
+    } on DioException catch (error) {
+      debugPrint(
+        'Edge function failed for school_id $schoolId: ${error.response?.statusCode}',
+      );
+      final fallbackProducts = await _fetchProductsFromRest(schoolId: schoolId);
+      _setCache(schoolId: schoolId, products: fallbackProducts);
+      return fallbackProducts;
+    }
+  }
+
+  void _setCache({
+    required String schoolId,
+    String? classId,
+    String? gender,
+    required List<Product> products,
+  }) {
+    final cacheKey = _cacheKey(
+      schoolId: schoolId,
+      classId: classId,
+      gender: gender,
+    );
+    _productCache[cacheKey] = products;
+    _cachedAt[cacheKey] = DateTime.now();
+
     for (final product in products) {
       for (final v in product.variants) {
         final barcode = v.barcode;
         if (barcode != null && barcode.isNotEmpty) {
-          _barcodeIndex[barcode.toUpperCase()] = v;
+          final normalizedBarcode = barcode.trim().toUpperCase();
+          _legacyBarcodeIndex[normalizedBarcode] = v;
+          _barcodeMatchCache[_barcodeKey(schoolId, normalizedBarcode)] =
+              ProductBarcodeMatch(product: product, variant: v);
         }
       }
     }
   }
 
   @override
-  List<Product> getCachedProducts(String schoolId) {
-    return _productCache[schoolId] ?? [];
+  List<Product> getCachedProducts({
+    required String schoolId,
+    String? classId,
+    String? gender,
+  }) {
+    return _productCache[_cacheKey(
+          schoolId: schoolId,
+          classId: classId,
+          gender: gender,
+        )] ??
+        const [];
   }
 
   @override
   void clearCache() {
     _productCache.clear();
     _cachedAt.clear();
-    _barcodeIndex.clear();
+    _barcodeMatchCache.clear();
+    _legacyBarcodeIndex.clear();
   }
 
-  /// New required method
-  Variant? getVariantByBarcode(String code) {
-    return _barcodeIndex[code.toUpperCase()];
+  @override
+  Future<ProductBarcodeMatch?> lookupProductByBarcode({
+    required String schoolId,
+    required String barcode,
+  }) async {
+    final scopedSchoolId = schoolId.trim();
+    final normalizedBarcode = barcode.trim().toUpperCase();
+    if (scopedSchoolId.isEmpty || normalizedBarcode.isEmpty) {
+      return null;
+    }
+
+    final cached =
+        _barcodeMatchCache[_barcodeKey(scopedSchoolId, normalizedBarcode)];
+    if (cached != null) {
+      return cached;
+    }
+
+    final remoteMatch = await _fetchProductByBarcodeFromRest(
+      schoolId: scopedSchoolId,
+      barcode: normalizedBarcode,
+    );
+    if (remoteMatch != null) {
+      _legacyBarcodeIndex[normalizedBarcode] = remoteMatch.variant;
+      _barcodeMatchCache[_barcodeKey(scopedSchoolId, normalizedBarcode)] =
+          remoteMatch;
+    }
+    return remoteMatch;
   }
 
   /// Backward compatible legacy method
   @override
   Variant? findVariantBySku(String sku) {
-    return getVariantByBarcode(sku);
+    return _legacyBarcodeIndex[sku.trim().toUpperCase()];
   }
 
   List<Product> _parseProducts(dynamic data, String scopedSchoolId) {
     final products = _extractProducts(data)
         .map((entry) => Product.fromJson(entry as Map<String, dynamic>))
         .toList();
-    print("API RESPONSE LENGTH: ${products.length}");
-    print(
-      "FIRST PRODUCT: ${products.isNotEmpty ? products[0].name : "EMPTY"}",
+    debugPrint('API RESPONSE LENGTH: ${products.length}');
+    debugPrint(
+      'FIRST PRODUCT: ${products.isNotEmpty ? products[0].name : "EMPTY"}',
     );
 
     final mismatched = products
@@ -143,32 +233,46 @@ class ProductRepositoryImpl implements ProductRepository {
             product.schoolId.isNotEmpty && product.schoolId != scopedSchoolId)
         .length;
     if (mismatched > 0) {
-      print(
-          'Warning: $mismatched products have school_id different from request');
+      debugPrint(
+        'Warning: $mismatched products have school_id different from request',
+      );
     }
 
     return products;
   }
 
-  Future<List<Product>> _fetchProductsFromRest(String schoolId) async {
-    print("REST FALLBACK → school_id: $schoolId");
+  Future<List<Product>> _fetchProductsFromRest({
+    required String schoolId,
+    String? classId,
+    String? gender,
+  }) async {
+    debugPrint(
+      'REST FALLBACK -> school_id=$schoolId class=${classId ?? '-'} gender=${gender ?? 'All'}',
+    );
     final prefs = await SharedPreferences.getInstance();
     final branchId = prefs.getString('selectedBranchId')?.trim();
+    final queryParameters = <String, dynamic>{
+      'select':
+          'id,name,school_id,class_id,gender,category,image_url,description,is_active,created_at,product_variants(id,product_id,size,sku,stock,price_override,base_price,is_active)',
+      'school_id': 'eq.$schoolId',
+      'is_active': 'eq.true',
+      'archived': 'eq.false',
+      'deleted_at': 'is.null',
+      'order': 'name.asc',
+      if (classId != null && classId.isNotEmpty) 'class_id': 'eq.$classId',
+    };
+    _applyGenderQuery(queryParameters, gender);
+
     final productsResponse = await _dio.get(
       '$_restUrl/products',
-      queryParameters: {
-        'select':
-            'id,name,school_id,category,image_url,description,is_active,created_at,product_variants(id,product_id,size,sku,stock,price_override,base_price,is_active)',
-        if (schoolId.isNotEmpty) 'school_id': 'eq.$schoolId',
-        'order': 'name.asc',
-      },
+      queryParameters: queryParameters,
       options: Options(headers: _restHeaders),
     );
 
     final productRows =
         (productsResponse.data as List<dynamic>).cast<Map<String, dynamic>>();
     if (productRows.isEmpty) {
-      print("REST FALLBACK COUNT: 0");
+      debugPrint('REST FALLBACK COUNT: 0');
       return const [];
     }
 
@@ -195,6 +299,8 @@ class ProductRepositoryImpl implements ProductRepository {
         .map((row) => Product.fromJson({
               'id': row['id'],
               'school_id': row['school_id'],
+              'class_id': row['class_id'],
+              'gender': row['gender'],
               'name': row['name'],
               'description': row['description'],
               'image_url': row['image_url'],
@@ -225,17 +331,160 @@ class ProductRepositoryImpl implements ProductRepository {
               }).toList()),
             }))
         .toList();
-    print("REST FALLBACK COUNT: ${fallbackProducts.length}");
-    print(
-      "REST FALLBACK FIRST PRODUCT: ${fallbackProducts.isNotEmpty ? fallbackProducts[0].name : "EMPTY"}",
+    debugPrint('REST FALLBACK COUNT: ${fallbackProducts.length}');
+    debugPrint(
+      'REST FALLBACK FIRST PRODUCT: ${fallbackProducts.isNotEmpty ? fallbackProducts[0].name : "EMPTY"}',
     );
     return fallbackProducts;
+  }
+
+  Future<ProductBarcodeMatch?> _fetchProductByBarcodeFromRest({
+    required String schoolId,
+    required String barcode,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    final branchId = prefs.getString('selectedBranchId')?.trim();
+
+    final response = await _dio.get(
+      '$_restUrl/product_variants',
+      queryParameters: {
+        'select':
+            'id,product_id,size,sku,stock,price_override,base_price,is_active,products!inner(id,name,school_id,class_id,gender,category,image_url,description,is_active,archived,deleted_at,created_at)',
+        'sku': 'eq.$barcode',
+        'products.school_id': 'eq.$schoolId',
+        'products.is_active': 'eq.true',
+        'products.archived': 'eq.false',
+        'products.deleted_at': 'is.null',
+        'limit': 1,
+      },
+      options: Options(headers: _restHeaders),
+    );
+
+    final rows = (response.data as List<dynamic>).cast<Map<String, dynamic>>();
+    if (rows.isEmpty) {
+      return null;
+    }
+
+    final row = rows.first;
+    final productRow = row['products'];
+    if (productRow is! Map<String, dynamic>) {
+      return null;
+    }
+
+    var stockValue = _asInt(row['stock']);
+    final variantId = row['id']?.toString() ?? '';
+    if (branchId != null && branchId.isNotEmpty && variantId.isNotEmpty) {
+      final inventoryResponse = await _dio.get(
+        '$_restUrl/branch_inventory',
+        queryParameters: {
+          'select': 'variant_id,stock',
+          'branch_id': 'eq.$branchId',
+          'variant_id': 'eq.$variantId',
+          'limit': 1,
+        },
+        options: Options(headers: _restHeaders),
+      );
+      final inventoryRows = (inventoryResponse.data as List<dynamic>)
+          .cast<Map<String, dynamic>>();
+      if (inventoryRows.isNotEmpty) {
+        stockValue = _asInt(inventoryRows.first['stock']);
+      }
+    }
+
+    final product = Product.fromJson({
+      'id': productRow['id'],
+      'school_id': productRow['school_id'],
+      'class_id': productRow['class_id'],
+      'gender': productRow['gender'],
+      'name': productRow['name'],
+      'description': productRow['description'],
+      'image_url': productRow['image_url'],
+      'category': productRow['category'],
+      'is_active': _boolToFlag(productRow['is_active']),
+      'updated_at': productRow['created_at'],
+      'variants': [
+        {
+          'id': row['id'],
+          'product_id': row['product_id'],
+          'size': row['size'],
+          'name': row['size'],
+          'sku': row['sku'],
+          'barcode': row['sku'],
+          'price': row['price_override'] ?? row['base_price'] ?? 0,
+          'stock': stockValue,
+          'is_active': _boolToFlag(row['is_active']),
+        },
+      ],
+    });
+
+    if (product.variants.isEmpty) {
+      return null;
+    }
+
+    return ProductBarcodeMatch(
+      product: product,
+      variant: product.variants.first,
+    );
   }
 
   Map<String, String> get _restHeaders => {
         'apikey': SupabaseConfig.anonKey,
         'Authorization': 'Bearer ${SupabaseConfig.anonKey}',
       };
+
+  void _applyGenderQuery(
+    Map<String, dynamic> queryParameters,
+    String? gender,
+  ) {
+    final normalizedGender = _normalizeGenderFilter(gender);
+    if (normalizedGender == null) return;
+
+    switch (normalizedGender) {
+      case 'Male':
+        queryParameters['gender'] = 'in.(Male,Boys)';
+        return;
+      case 'Female':
+        queryParameters['gender'] = 'in.(Female,Girls)';
+        return;
+      default:
+        queryParameters['gender'] = 'eq.$normalizedGender';
+    }
+  }
+
+  String _cacheKey({
+    required String schoolId,
+    String? classId,
+    String? gender,
+  }) {
+    final normalizedSchoolId = schoolId.trim();
+    final normalizedClassId = classId?.trim() ?? '';
+    final normalizedGender = _normalizeGenderFilter(gender) ?? '';
+    return '$normalizedSchoolId|$normalizedClassId|$normalizedGender';
+  }
+
+  String _barcodeKey(String schoolId, String barcode) {
+    return '${schoolId.trim()}|${barcode.trim().toUpperCase()}';
+  }
+
+  String? _normalizeGenderFilter(String? gender) {
+    final normalized = gender?.trim();
+    if (normalized == null || normalized.isEmpty) return null;
+
+    switch (normalized.toLowerCase()) {
+      case 'all':
+        return null;
+      case 'boys':
+      case 'male':
+        return 'Male';
+      case 'girls':
+      case 'female':
+        return 'Female';
+      case 'unisex':
+        return 'Unisex';
+      default:
+        return normalized;
+    }
+  }
 
   static int _boolToFlag(dynamic value) {
     if (value is bool) return value ? 1 : 0;

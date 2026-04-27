@@ -28,10 +28,21 @@ class _CustomerDetailsSheetState extends ConsumerState<CustomerDetailsSheet> {
   Timer? _debounce;
 
   final List<String> _classes = [
-    'Pre-KG', 'LKG', 'UKG',
-    'Class 1', 'Class 2', 'Class 3', 'Class 4', 'Class 5',
-    'Class 6', 'Class 7', 'Class 8', 'Class 9', 'Class 10',
-    'Class 11', 'Class 12',
+    'Pre-KG',
+    'LKG',
+    'UKG',
+    'Class 1',
+    'Class 2',
+    'Class 3',
+    'Class 4',
+    'Class 5',
+    'Class 6',
+    'Class 7',
+    'Class 8',
+    'Class 9',
+    'Class 10',
+    'Class 11',
+    'Class 12',
   ];
 
   @override
@@ -77,17 +88,30 @@ class _CustomerDetailsSheetState extends ConsumerState<CustomerDetailsSheet> {
 
   void _submit() {
     if (_formKey.currentState!.validate()) {
+      final phone = _trimToNull(_phoneController.text) ?? '';
+      final name = _trimToNull(_nameController.text);
+      final studentName = _trimToNull(_studentNameController.text);
+      final selectedClass = _trimToNull(_selectedClass);
+      final address = _trimToNull(_addressController.text);
+
       final info = CustomerInfo(
-        phone: _phoneController.text,
-        name: _nameController.text.isEmpty ? null : _nameController.text,
-        studentName: _studentNameController.text,
-        studentClass: _selectedClass,
-        address: _addressController.text.isEmpty ? null : _addressController.text,
+        phone: phone,
+        name: name,
+        studentName: studentName,
+        studentClass: selectedClass,
+        className: selectedClass,
+        grade: selectedClass,
+        address: address,
         isWalkIn: false,
       );
       ref.read(customerRepoProvider).saveRecentCustomer(info);
       Navigator.pop(context, info);
     }
+  }
+
+  String? _trimToNull(String? value) {
+    final trimmed = value?.trim() ?? '';
+    return trimmed.isEmpty ? null : trimmed;
   }
 
   @override
@@ -127,8 +151,8 @@ class _CustomerDetailsSheetState extends ConsumerState<CustomerDetailsSheet> {
                         Navigator.pop(context, CustomerInfo.walkIn()),
                     icon: const Icon(Icons.directions_walk_rounded, size: 18),
                     label: const Text('WALK-IN'),
-                    style: TextButton.styleFrom(
-                        foregroundColor: AppColors.accent),
+                    style:
+                        TextButton.styleFrom(foregroundColor: AppColors.accent),
                   ),
                 ],
               ),
@@ -150,8 +174,8 @@ class _CustomerDetailsSheetState extends ConsumerState<CustomerDetailsSheet> {
                               height: 20,
                               child: Padding(
                                 padding: EdgeInsets.all(12),
-                                child: CircularProgressIndicator(
-                                    strokeWidth: 2),
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
                               ),
                             )
                           : null,
@@ -165,17 +189,20 @@ class _CustomerDetailsSheetState extends ConsumerState<CustomerDetailsSheet> {
                       margin: const EdgeInsets.only(top: 4),
                       decoration: BoxDecoration(
                         color: AppColors.surfaceElevated,
-                        borderRadius:
-                            BorderRadius.circular(AppDimens.radiusMD),
+                        borderRadius: BorderRadius.circular(AppDimens.radiusMD),
                         border: Border.all(color: AppColors.border),
                       ),
                       child: Column(
                         children: _suggestions
                             .map((s) => ListTile(
                                   title: Text(
-                                      s.studentName ?? 'Unknown Student'),
+                                    s.name ??
+                                        s.studentName ??
+                                        'Unknown Customer',
+                                  ),
                                   subtitle: Text(
-                                      '${s.phone} · ${s.studentClass ?? "No Class"}'),
+                                    '${s.studentName ?? "Unknown Student"} · ${s.phone} · ${s.studentClass ?? "No Class"}',
+                                  ),
                                   onTap: () => _selectSuggestion(s),
                                   dense: true,
                                 ))
@@ -187,28 +214,33 @@ class _CustomerDetailsSheetState extends ConsumerState<CustomerDetailsSheet> {
               const SizedBox(height: AppDimens.spacingLG),
 
               TextFormField(
+                controller: _nameController,
+                decoration: const InputDecoration(
+                  labelText: 'Customer Name (Optional)',
+                  prefixIcon: Icon(Icons.badge_outlined),
+                ),
+              ),
+              const SizedBox(height: AppDimens.spacingLG),
+
+              TextFormField(
                 controller: _studentNameController,
                 decoration: const InputDecoration(
-                  labelText: 'Student Name',
+                  labelText: 'Student Name (Optional)',
                   prefixIcon: Icon(Icons.person_outline_rounded),
                 ),
-                validator: (v) =>
-                    (v == null || v.isEmpty) ? 'Required' : null,
               ),
               const SizedBox(height: AppDimens.spacingLG),
 
               DropdownButtonFormField<String>(
                 value: _selectedClass,
                 decoration: const InputDecoration(
-                  labelText: 'Class',
+                  labelText: 'Class (Optional)',
                   prefixIcon: Icon(Icons.school_outlined),
                 ),
                 items: _classes
-                    .map((c) =>
-                        DropdownMenuItem(value: c, child: Text(c)))
+                    .map((c) => DropdownMenuItem(value: c, child: Text(c)))
                     .toList(),
                 onChanged: (v) => setState(() => _selectedClass = v),
-                validator: (v) => v == null ? 'Required' : null,
               ),
               const SizedBox(height: AppDimens.spacingLG),
 
