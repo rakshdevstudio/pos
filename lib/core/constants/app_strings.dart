@@ -22,7 +22,7 @@ class AppStrings {
   static const String emptyCartSub = 'Add products from the right panel';
   static const String checkout = 'Checkout';
   static const String searchProducts = 'Search products...';
-  static const String scanBarcode = 'Scan or enter barcode';
+  static const String scanBarcode = 'Scan barcode or type code';
   static const String products = 'Products';
   static const String total = 'Total';
   static const String subtotal = 'Subtotal';
@@ -61,5 +61,5 @@ class AppStrings {
   static const String genericError = 'Something went wrong';
   static const String networkError = 'No internet connection';
   static const String loginError = 'Invalid credentials';
-  static const String barcodeNotFound = 'Product not found';
+  static const String barcodeNotFound = 'Barcode not recognized';
 }

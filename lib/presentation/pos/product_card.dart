@@ -24,10 +24,6 @@ class _ProductCardState extends State<ProductCard> {
 
   @override
   Widget build(BuildContext context) {
-    final variantStocks = widget.product.variants.map((v) => v.stock).toList();
-    print('PRODUCT: ${widget.product.name}');
-    print('VARIANT STOCKS: $variantStocks');
-
     final totalStock = widget.product.variants.fold<int>(
       0,
       (sum, v) => sum + v.stock,

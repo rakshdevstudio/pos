@@ -11,6 +11,8 @@ class ProductRepositoryImpl implements ProductRepository {
   static const String _productsUrl =
       '${SupabaseConfig.url}/functions/v1/get-products';
   static const String _restUrl = '${SupabaseConfig.url}/rest/v1';
+  static const String _productSelectFields =
+      'id,name,school_id,class_id,gender,category,image_url,description,is_active,created_at';
 
   final Dio _dio;
 
@@ -18,6 +20,7 @@ class ProductRepositoryImpl implements ProductRepository {
   final Map<String, DateTime> _cachedAt = {};
   final Map<String, ProductBarcodeMatch> _barcodeMatchCache = {};
   final Map<String, Variant> _legacyBarcodeIndex = {};
+  _VariantSchemaProfile? _variantSchemaProfile;
 
   ProductRepositoryImpl({Dio? dio})
       : _dio = dio ??
@@ -68,10 +71,6 @@ class ProductRepositoryImpl implements ProductRepository {
     final scopedClassId = classId?.trim();
     final normalizedGender = _normalizeGenderFilter(gender);
 
-    debugPrint(
-      '[POS Products] school=$scopedSchoolId class=${scopedClassId ?? '-'} gender=${normalizedGender ?? 'All'}',
-    );
-
     if (scopedSchoolId.isEmpty) {
       return const [];
     }
@@ -105,7 +104,6 @@ class ProductRepositoryImpl implements ProductRepository {
   }
 
   Future<List<Product>> _fetchAllSchoolProducts(String schoolId) async {
-    debugPrint('API CALL -> school_id: $schoolId');
     try {
       final response = await _dio.get(
         _productsUrl,
@@ -151,13 +149,11 @@ class ProductRepositoryImpl implements ProductRepository {
 
     for (final product in products) {
       for (final v in product.variants) {
-        final barcode = v.barcode;
-        if (barcode != null && barcode.isNotEmpty) {
-          final normalizedBarcode = barcode.trim().toUpperCase();
-          _legacyBarcodeIndex[normalizedBarcode] = v;
-          _barcodeMatchCache[_barcodeKey(schoolId, normalizedBarcode)] =
-              ProductBarcodeMatch(product: product, variant: v);
-        }
+        _cacheVariantLookup(
+          schoolId: schoolId,
+          product: product,
+          variant: v,
+        );
       }
     }
   }
@@ -182,6 +178,7 @@ class ProductRepositoryImpl implements ProductRepository {
     _cachedAt.clear();
     _barcodeMatchCache.clear();
     _legacyBarcodeIndex.clear();
+    _variantSchemaProfile = null;
   }
 
   @override
@@ -190,8 +187,8 @@ class ProductRepositoryImpl implements ProductRepository {
     required String barcode,
   }) async {
     final scopedSchoolId = schoolId.trim();
-    final normalizedBarcode = barcode.trim().toUpperCase();
-    if (scopedSchoolId.isEmpty || normalizedBarcode.isEmpty) {
+    final normalizedBarcode = _normalizeCode(barcode);
+    if (scopedSchoolId.isEmpty || normalizedBarcode == null) {
       return null;
     }
 
@@ -201,16 +198,26 @@ class ProductRepositoryImpl implements ProductRepository {
       return cached;
     }
 
-    final remoteMatch = await _fetchProductByBarcodeFromRest(
-      schoolId: scopedSchoolId,
-      barcode: normalizedBarcode,
-    );
-    if (remoteMatch != null) {
-      _legacyBarcodeIndex[normalizedBarcode] = remoteMatch.variant;
+    for (final candidate in _barcodeCandidates(barcode)) {
+      final remoteMatch = await _fetchProductByBarcodeFromRest(
+        schoolId: scopedSchoolId,
+        barcode: candidate,
+      );
+      if (remoteMatch == null) {
+        continue;
+      }
+
+      _cacheVariantLookup(
+        schoolId: scopedSchoolId,
+        product: remoteMatch.product,
+        variant: remoteMatch.variant,
+      );
       _barcodeMatchCache[_barcodeKey(scopedSchoolId, normalizedBarcode)] =
           remoteMatch;
+      return remoteMatch;
     }
-    return remoteMatch;
+
+    return null;
   }
 
   /// Backward compatible legacy method
@@ -219,26 +226,10 @@ class ProductRepositoryImpl implements ProductRepository {
     return _legacyBarcodeIndex[sku.trim().toUpperCase()];
   }
 
-  List<Product> _parseProducts(dynamic data, String scopedSchoolId) {
-    final products = _extractProducts(data)
+  List<Product> _parseProducts(dynamic data, String _) {
+    return _extractProducts(data)
         .map((entry) => Product.fromJson(entry as Map<String, dynamic>))
         .toList();
-    debugPrint('API RESPONSE LENGTH: ${products.length}');
-    debugPrint(
-      'FIRST PRODUCT: ${products.isNotEmpty ? products[0].name : "EMPTY"}',
-    );
-
-    final mismatched = products
-        .where((product) =>
-            product.schoolId.isNotEmpty && product.schoolId != scopedSchoolId)
-        .length;
-    if (mismatched > 0) {
-      debugPrint(
-        'Warning: $mismatched products have school_id different from request',
-      );
-    }
-
-    return products;
   }
 
   Future<List<Product>> _fetchProductsFromRest({
@@ -246,14 +237,11 @@ class ProductRepositoryImpl implements ProductRepository {
     String? classId,
     String? gender,
   }) async {
-    debugPrint(
-      'REST FALLBACK -> school_id=$schoolId class=${classId ?? '-'} gender=${gender ?? 'All'}',
-    );
+    final variantSchema = await _getVariantSchemaProfile();
     final prefs = await SharedPreferences.getInstance();
     final branchId = prefs.getString('selectedBranchId')?.trim();
     final queryParameters = <String, dynamic>{
-      'select':
-          'id,name,school_id,class_id,gender,category,image_url,description,is_active,created_at,product_variants(id,product_id,size,sku,stock,price_override,base_price,is_active)',
+      'select': '$_productSelectFields,${variantSchema.nestedProductSelect}',
       'school_id': 'eq.$schoolId',
       'is_active': 'eq.true',
       'archived': 'eq.false',
@@ -272,7 +260,6 @@ class ProductRepositoryImpl implements ProductRepository {
     final productRows =
         (productsResponse.data as List<dynamic>).cast<Map<String, dynamic>>();
     if (productRows.isEmpty) {
-      debugPrint('REST FALLBACK COUNT: 0');
       return const [];
     }
 
@@ -323,7 +310,8 @@ class ProductRepositoryImpl implements ProductRepository {
                   'size': variantRow['size'],
                   'name': variantRow['size'],
                   'sku': variantRow['sku'],
-                  'barcode': variantRow['sku'],
+                  'barcode': variantRow['barcode'],
+                  'barcode_value': variantRow['barcode_value'],
                   'price': priceValue,
                   'stock': stockValue,
                   'is_active': _boolToFlag(variantRow['is_active']),
@@ -331,10 +319,6 @@ class ProductRepositoryImpl implements ProductRepository {
               }).toList()),
             }))
         .toList();
-    debugPrint('REST FALLBACK COUNT: ${fallbackProducts.length}');
-    debugPrint(
-      'REST FALLBACK FIRST PRODUCT: ${fallbackProducts.isNotEmpty ? fallbackProducts[0].name : "EMPTY"}',
-    );
     return fallbackProducts;
   }
 
@@ -342,30 +326,39 @@ class ProductRepositoryImpl implements ProductRepository {
     required String schoolId,
     required String barcode,
   }) async {
+    final variantSchema = await _getVariantSchemaProfile();
     final prefs = await SharedPreferences.getInstance();
     final branchId = prefs.getString('selectedBranchId')?.trim();
 
-    final response = await _dio.get(
-      '$_restUrl/product_variants',
-      queryParameters: {
-        'select':
-            'id,product_id,size,sku,stock,price_override,base_price,is_active,products!inner(id,name,school_id,class_id,gender,category,image_url,description,is_active,archived,deleted_at,created_at)',
-        'sku': 'eq.$barcode',
-        'products.school_id': 'eq.$schoolId',
-        'products.is_active': 'eq.true',
-        'products.archived': 'eq.false',
-        'products.deleted_at': 'is.null',
-        'limit': 1,
-      },
-      options: Options(headers: _restHeaders),
-    );
+    Map<String, dynamic>? row;
+    for (final field in variantSchema.lookupFields) {
+      final response = await _dio.get(
+        '$_restUrl/product_variants',
+        queryParameters: {
+          'select':
+              variantSchema.variantSelectWithProduct(_productSelectFields),
+          field: 'eq.$barcode',
+          'products.school_id': 'eq.$schoolId',
+          'products.is_active': 'eq.true',
+          'products.archived': 'eq.false',
+          'products.deleted_at': 'is.null',
+          'limit': 1,
+        },
+        options: Options(headers: _restHeaders),
+      );
 
-    final rows = (response.data as List<dynamic>).cast<Map<String, dynamic>>();
-    if (rows.isEmpty) {
+      final rows =
+          (response.data as List<dynamic>).cast<Map<String, dynamic>>();
+      if (rows.isNotEmpty) {
+        row = rows.first;
+        break;
+      }
+    }
+
+    if (row == null) {
       return null;
     }
 
-    final row = rows.first;
     final productRow = row['products'];
     if (productRow is! Map<String, dynamic>) {
       return null;
@@ -409,7 +402,8 @@ class ProductRepositoryImpl implements ProductRepository {
           'size': row['size'],
           'name': row['size'],
           'sku': row['sku'],
-          'barcode': row['sku'],
+          'barcode': row['barcode'],
+          'barcode_value': row['barcode_value'],
           'price': row['price_override'] ?? row['base_price'] ?? 0,
           'stock': stockValue,
           'is_active': _boolToFlag(row['is_active']),
@@ -431,6 +425,70 @@ class ProductRepositoryImpl implements ProductRepository {
         'apikey': SupabaseConfig.anonKey,
         'Authorization': 'Bearer ${SupabaseConfig.anonKey}',
       };
+
+  Future<_VariantSchemaProfile> _getVariantSchemaProfile() async {
+    final cachedProfile = _variantSchemaProfile;
+    if (cachedProfile != null) {
+      return cachedProfile;
+    }
+
+    for (final profile in _variantSchemaProfiles) {
+      try {
+        await _dio.get(
+          '$_restUrl/product_variants',
+          queryParameters: {
+            'select': profile.variantSelect,
+            'limit': 1,
+          },
+          options: Options(headers: _restHeaders),
+        );
+        _variantSchemaProfile = profile;
+        return profile;
+      } on DioException catch (error) {
+        if (error.response?.statusCode == 400) {
+          continue;
+        }
+        rethrow;
+      }
+    }
+
+    _variantSchemaProfile = _variantSchemaProfiles.last;
+    return _variantSchemaProfile!;
+  }
+
+  void _cacheVariantLookup({
+    required String schoolId,
+    required Product product,
+    required Variant variant,
+  }) {
+    final match = ProductBarcodeMatch(product: product, variant: variant);
+    final values = <String?>{
+      variant.barcode,
+      variant.sku,
+    };
+
+    for (final value in values) {
+      final normalizedValue = _normalizeCode(value);
+      if (normalizedValue == null) {
+        continue;
+      }
+
+      _legacyBarcodeIndex[normalizedValue] = variant;
+      _barcodeMatchCache[_barcodeKey(schoolId, normalizedValue)] = match;
+    }
+  }
+
+  Iterable<String> _barcodeCandidates(String barcode) sync* {
+    final trimmed = barcode.trim();
+    final normalized = _normalizeCode(barcode);
+    final yielded = <String>{};
+    if (trimmed.isNotEmpty && yielded.add(trimmed)) {
+      yield trimmed;
+    }
+    if (normalized != null && yielded.add(normalized)) {
+      yield normalized;
+    }
+  }
 
   void _applyGenderQuery(
     Map<String, dynamic> queryParameters,
@@ -463,7 +521,15 @@ class ProductRepositoryImpl implements ProductRepository {
   }
 
   String _barcodeKey(String schoolId, String barcode) {
-    return '${schoolId.trim()}|${barcode.trim().toUpperCase()}';
+    return '${schoolId.trim()}|${_normalizeCode(barcode) ?? ''}';
+  }
+
+  String? _normalizeCode(String? code) {
+    final trimmed = code?.trim();
+    if (trimmed == null || trimmed.isEmpty) {
+      return null;
+    }
+    return trimmed.toUpperCase();
   }
 
   String? _normalizeGenderFilter(String? gender) {
@@ -497,3 +563,80 @@ class ProductRepositoryImpl implements ProductRepository {
     return int.tryParse(value?.toString() ?? '') ?? 0;
   }
 }
+
+class _VariantSchemaProfile {
+  final List<String> variantFields;
+  final List<String> lookupFields;
+
+  const _VariantSchemaProfile({
+    required this.variantFields,
+    required this.lookupFields,
+  });
+
+  String get variantSelect => variantFields.join(',');
+
+  String get nestedProductSelect => 'product_variants($variantSelect)';
+
+  String variantSelectWithProduct(String productFields) {
+    return '$variantSelect,products!inner($productFields)';
+  }
+}
+
+const List<_VariantSchemaProfile> _variantSchemaProfiles = [
+  _VariantSchemaProfile(
+    variantFields: [
+      'id',
+      'product_id',
+      'size',
+      'sku',
+      'barcode',
+      'barcode_value',
+      'stock',
+      'price_override',
+      'base_price',
+      'is_active',
+    ],
+    lookupFields: ['barcode', 'barcode_value', 'sku'],
+  ),
+  _VariantSchemaProfile(
+    variantFields: [
+      'id',
+      'product_id',
+      'size',
+      'sku',
+      'barcode_value',
+      'stock',
+      'price_override',
+      'base_price',
+      'is_active',
+    ],
+    lookupFields: ['barcode_value', 'sku'],
+  ),
+  _VariantSchemaProfile(
+    variantFields: [
+      'id',
+      'product_id',
+      'size',
+      'sku',
+      'barcode',
+      'stock',
+      'price_override',
+      'base_price',
+      'is_active',
+    ],
+    lookupFields: ['barcode', 'sku'],
+  ),
+  _VariantSchemaProfile(
+    variantFields: [
+      'id',
+      'product_id',
+      'size',
+      'sku',
+      'stock',
+      'price_override',
+      'base_price',
+      'is_active',
+    ],
+    lookupFields: ['sku'],
+  ),
+];

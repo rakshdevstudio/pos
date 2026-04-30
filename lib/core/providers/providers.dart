@@ -5,6 +5,7 @@ import '../../data/repositories/customer_repository.dart';
 import '../../data/repositories/order_repository_impl.dart';
 import '../../data/repositories/product_repository_impl.dart';
 import '../../data/repositories/school_repository_impl.dart';
+import '../../services/barcode_lookup_service.dart';
 
 /// Singleton ApiClient — single Dio instance per app lifetime.
 final apiClientProvider = Provider<ApiClient>((_) => ApiClient());
@@ -20,6 +21,10 @@ final orderRepoProvider = Provider<OrderRepositoryImpl>((ref) {
 /// Product repository — singleton preserves in-memory SKU index.
 final productRepoProvider = Provider<ProductRepositoryImpl>((ref) {
   return ProductRepositoryImpl();
+});
+
+final barcodeLookupServiceProvider = Provider<BarcodeLookupService>((ref) {
+  return BarcodeLookupService(ref.read(productRepoProvider));
 });
 
 /// School repository.

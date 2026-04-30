@@ -2,6 +2,7 @@ class Variant {
   final String id;
   final String productId;
   final String name;
+  final String? sku;
   final String? barcode;
   final double price;
   final int stock;
@@ -10,13 +11,13 @@ class Variant {
 
   // Compatibility aliases for existing UI and repositories
   String get size => name;
-  String? get sku => barcode;
   int get stockQuantity => stock;
 
   const Variant({
     required this.id,
     required this.productId,
     required this.name,
+    this.sku,
     this.barcode,
     required this.price,
     this.stock = 0,
@@ -30,7 +31,10 @@ class Variant {
       id: _asString(json['id']),
       productId: _asString(json['product_id']),
       name: _asString(json['name'] ?? json['size']),
-      barcode: _asNullableString(json['barcode'] ?? json['sku']),
+      sku: _asNullableString(json['sku']),
+      barcode: _asNullableString(
+        json['barcode'] ?? json['barcode_value'] ?? json['sku'],
+      ),
       price: (json['price'] as num).toDouble(),
       stock: _asInt(stockValue).clamp(0, 1 << 31),
       isActive: json['is_active'] ?? 1,
@@ -45,6 +49,7 @@ class Variant {
       id: id,
       productId: productId,
       name: name,
+      sku: sku,
       barcode: barcode,
       price: price,
       stock: stock ?? this.stock,
@@ -59,8 +64,9 @@ class Variant {
         'size': name, // fallback mapped to old key for backwards compat
         'name': name,
         'price': price,
-        'sku': barcode,
+        'sku': sku,
         'barcode': barcode,
+        'barcode_value': barcode,
         'stock_quantity': stock,
         'stock': stock,
         'is_active': isActive,

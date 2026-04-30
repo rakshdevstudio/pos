@@ -1,6 +1,12 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../domain/models/models.dart';
 
+enum CartAddResult {
+  added,
+  outOfStock,
+  stockLimitReached,
+}
+
 class CartState {
   final List<CartItem> items;
   final double discountAmount;
@@ -58,7 +64,11 @@ class CartNotifier extends StateNotifier<CartState> {
   }
 
   bool addItem(Product product, Variant variant) {
-    if (variant.stock <= 0) return false;
+    return addItemWithResult(product, variant) == CartAddResult.added;
+  }
+
+  CartAddResult addItemWithResult(Product product, Variant variant) {
+    if (variant.stock <= 0) return CartAddResult.outOfStock;
 
     // we don't save history on single add, only destructive ops
     final existing =
@@ -74,7 +84,7 @@ class CartNotifier extends StateNotifier<CartState> {
         }
         return i;
       }).toList();
-      if (!changed) return false;
+      if (!changed) return CartAddResult.stockLimitReached;
       state = state.copyWith(items: updated);
     } else {
       state = state.copyWith(
@@ -82,7 +92,7 @@ class CartNotifier extends StateNotifier<CartState> {
       );
     }
     _recalcDiscount();
-    return true;
+    return CartAddResult.added;
   }
 
   void removeItem(String key) {

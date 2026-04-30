@@ -1,7 +1,10 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'core/network/resilient_http_overrides.dart';
 import 'core/theme/app_theme.dart';
 import 'core/router/app_router.dart';
 import 'data/local/database_helper.dart';
@@ -22,6 +25,10 @@ void main() async {
 
   // Init secure storage base URL cache (sync, avoids per-request async)
   await ApiClient.initBaseUrl();
+
+  if (Platform.isAndroid) {
+    HttpOverrides.global = ResilientHttpOverrides();
+  }
 
   // Run atomic SharedPreferences → SQLite migration (no-op if already done)
   await DatabaseHelper.instance.migrateFromSharedPreferences();
