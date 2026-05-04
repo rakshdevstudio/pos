@@ -232,7 +232,7 @@ class _CustomerDetailsSheetState extends ConsumerState<CustomerDetailsSheet> {
               const SizedBox(height: AppDimens.spacingLG),
 
               DropdownButtonFormField<String>(
-                value: _selectedClass,
+                initialValue: _selectedClass,
                 decoration: const InputDecoration(
                   labelText: 'Class (Optional)',
                   prefixIcon: Icon(Icons.school_outlined),

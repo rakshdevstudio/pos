@@ -39,6 +39,22 @@ class CartState {
       discountValue: discountValue ?? this.discountValue,
     );
   }
+
+  static double computeDiscountAmount({
+    required List<CartItem> items,
+    required double discountValue,
+    required bool isPercentDiscount,
+  }) {
+    if (discountValue <= 0) {
+      return 0;
+    }
+
+    final subtotal = items.fold<double>(0, (sum, item) => sum + item.lineTotal);
+    if (isPercentDiscount) {
+      return subtotal * (discountValue / 100);
+    }
+    return discountValue;
+  }
 }
 
 class CartNotifier extends StateNotifier<CartState> {
@@ -188,6 +204,24 @@ class CartNotifier extends StateNotifier<CartState> {
   void resetCart() {
     _history.clear();
     state = const CartState();
+  }
+
+  void restoreCart({
+    required List<CartItem> items,
+    double discountValue = 0,
+    bool isPercentDiscount = false,
+  }) {
+    _history.clear();
+    state = CartState(
+      items: items,
+      discountValue: discountValue,
+      isPercentDiscount: isPercentDiscount,
+      discountAmount: CartState.computeDiscountAmount(
+        items: items,
+        discountValue: discountValue,
+        isPercentDiscount: isPercentDiscount,
+      ),
+    );
   }
 
   void processCheckout() {

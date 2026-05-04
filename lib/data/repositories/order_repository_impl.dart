@@ -1,10 +1,22 @@
 import 'dart:convert';
+
+import 'package:flutter/foundation.dart';
 import 'package:supabase/supabase.dart';
 import '../../core/config/supabase_config.dart';
 import '../remote/api_client.dart';
 import '../../domain/models/models.dart';
 import '../../domain/repositories/order_repository.dart';
 import '../local/database_helper.dart';
+
+enum _InventoryMovementDirection {
+  outbound('OUT', 'pos_order'),
+  inbound('IN', 'pos_order_rollback');
+
+  const _InventoryMovementDirection(this.rpcType, this.reason);
+
+  final String rpcType;
+  final String reason;
+}
 
 class OrderRepositoryImpl implements OrderRepository {
   static const String _fallbackReferenceId =
@@ -36,6 +48,12 @@ class OrderRepositoryImpl implements OrderRepository {
       'discount_amount': order.discountAmount,
       'total': order.total,
       'payment_method': order.paymentMethod.name,
+      'metadata_json': jsonEncode({
+        'payment_breakdown': order.resolvedPaymentBreakdown
+            .map((entry) => entry.toJson())
+            .toList(),
+        'metadata': order.metadata,
+      }),
       'created_at': order.createdAt.toIso8601String(),
       'updated_at': now,
       'sync_status': 'pending',
@@ -59,6 +77,12 @@ class OrderRepositoryImpl implements OrderRepository {
     required String schoolId,
     required String schoolName,
     required String customerName,
+    required double subtotal,
+    required double discountAmount,
+    required double total,
+    required PaymentMethod paymentMethod,
+    List<PaymentAllocation> paymentBreakdown = const [],
+    Map<String, dynamic>? metadata,
     String? customerPhone,
     String? alternatePhone,
     String? customerEmail,
@@ -80,159 +104,302 @@ class OrderRepositoryImpl implements OrderRepository {
 
     final supabase = _supabase;
     final createdById = await _resolveCreatedById();
-    final subtotal = items.fold<double>(0, (sum, item) => sum + item.lineTotal);
-    final totalAmount = subtotal;
-    final resolvedSchoolName = _trimToNull(schoolName) ?? 'Store';
-    const platformSource = 'offline';
-    const platformChannel = 'pos';
-    const platformOrderSource = 'pos';
-    const platformCreatedVia = 'pos_app';
-    const platformBuyerType = 'Walk-in Customer';
-    final orderItemsSnapshot = _buildOrderItemsSummary(
-      items: items,
-      schoolName: resolvedSchoolName,
+    final totalAmount = total;
+    final resolvedPaymentBreakdown = paymentBreakdown.isNotEmpty
+        ? paymentBreakdown
+        : [
+            PaymentAllocation(
+              method: paymentMethod == PaymentMethod.split
+                  ? PaymentMethod.cash
+                  : paymentMethod,
+              amount: total,
+            ),
+          ];
+    final payload = _buildRemoteOrderPayload(
+      schoolId: schoolId,
+      branchId: branchId,
+      customerName: customerName,
+      customerPhone: customerPhone,
+      alternatePhone: alternatePhone,
+      customerEmail: customerEmail,
+      customerAddress: customerAddress,
+      city: city,
+      pincode: pincode,
+      studentName: studentName,
+      grade: grade,
+      className: className,
+      totalAmount: totalAmount,
+      paymentMethod: paymentMethod,
+      paymentBreakdown: resolvedPaymentBreakdown,
+      status: status,
     );
 
-    final now = DateTime.now().toIso8601String();
-    final payload = <String, dynamic>{
-      'offline_id': _trimToNull(orderId),
-      'school_id': schoolId,
-      'school_name': resolvedSchoolName,
-      'branch_id': _trimToNull(branchId),
-      'subtotal': subtotal,
-      'total_amount': totalAmount,
-      'total': totalAmount,
-      'customer_name': _trimToNull(customerName) ?? 'Walk-in Customer',
-      'student_name': _trimToNull(studentName),
-      'phone': _trimToNull(customerPhone),
-      'alternate_phone': _trimToNull(alternatePhone),
-      'email': _trimToNull(customerEmail),
-      'address': _trimToNull(customerAddress),
-      'city': _trimToNull(city),
-      'pincode': _trimToNull(pincode),
-      'grade': _trimToNull(grade),
-      'class_name': _trimToNull(className),
-      'source': platformSource,
-      'channel': platformChannel,
-      'order_source': platformOrderSource,
-      'order_channel': platformChannel,
-      'created_via': platformCreatedVia,
-      'customer_type': platformBuyerType,
-      'buyer_type': platformBuyerType,
-      'status': _trimToNull(status) ?? 'Placed',
-      'items': orderItemsSnapshot,
-      'order_items': orderItemsSnapshot,
-      'payment_mode': 'UNKNOWN',
-      'created_at': now,
-      'updated_at': now,
-    };
-
-    print('POS PLATFORM SOURCE: $platformSource');
-    print('POS CHANNEL: $platformChannel');
-    print('POS CUSTOMER_TYPE: $platformBuyerType');
-    print(
-      'POS CUSTOMER_NAME: ${_trimToNull(customerName) ?? 'Walk-in Customer'}',
-    );
-    print('POS FINAL ORDER PAYLOAD:');
-    print(payload);
+    debugPrint('POS FINAL ORDER PAYLOAD:');
+    debugPrint('$payload');
 
     final orderRes = await _insertOrderWithSchemaFallback(payload);
 
     final dbOrderId = orderRes['id'];
-    print('ORDER CREATED: $dbOrderId');
-
-    await _enforcePosSourceMetadataById(dbOrderId);
-
-    try {
-      final savedRow = await supabase
-          .from('orders')
-          .select('*')
-          .eq('id', dbOrderId)
-          .maybeSingle();
-      if (savedRow != null) {
-        print('POS ORDER SAVED ROW:');
-        print(_savedOrderSummary(savedRow, payload));
-      }
-    } catch (e) {
-      print('POS ORDER VERIFY WARN: $e');
-    }
-
-    await _insertOrderItemsWithSchemaFallback(
-      items: items,
-      orderId: dbOrderId,
-      schoolId: schoolId,
-      schoolName: resolvedSchoolName,
-    );
-
-    try {
-      final savedItems = await supabase
-          .from('order_items')
-          .select('*')
-          .eq('order_id', dbOrderId)
-          .order('id');
-      print('POS ORDER ITEM SAVED ROWS:');
-      print(savedItems);
-    } catch (e) {
-      print('POS ORDER ITEM VERIFY WARN: $e');
-    }
-
     final inventoryReferenceSource = dbOrderId?.toString() ?? orderId;
-    final quantitiesByVariant = <String, int>{};
-    for (final item in items) {
-      final quantity = item.quantity.abs();
-      if (quantity <= 0) continue;
-      quantitiesByVariant.update(
-        item.variant.id,
-        (current) => current + quantity,
-        ifAbsent: () => quantity,
-      );
-    }
-
     final appliedEntries = <MapEntry<String, int>>[];
+    debugPrint('ORDER CREATED: $dbOrderId');
 
     try {
+      try {
+        final savedRow = await supabase
+            .from('orders')
+            .select('*')
+            .eq('id', dbOrderId)
+            .maybeSingle();
+        if (savedRow != null) {
+          debugPrint('POS ORDER SAVED ROW:');
+          debugPrint('${_savedOrderSummary(savedRow, payload)}');
+        }
+      } catch (e) {
+        debugPrint('POS ORDER VERIFY WARN: $e');
+      }
+
+      await _insertOrderItemsWithSchemaFallback(
+        items: items,
+        orderId: dbOrderId,
+        schoolId: schoolId,
+        schoolName: schoolName,
+      );
+
+      try {
+        final savedItems = await supabase
+            .from('order_items')
+            .select('*')
+            .eq('order_id', dbOrderId)
+            .order('id');
+        debugPrint('POS ORDER ITEM SAVED ROWS:');
+        debugPrint('$savedItems');
+      } catch (e) {
+        debugPrint('POS ORDER ITEM VERIFY WARN: $e');
+      }
+
+      final quantitiesByVariant = <String, int>{};
+      for (final item in items) {
+        final quantity = item.quantity.abs();
+        if (quantity <= 0) continue;
+        quantitiesByVariant.update(
+          item.variant.id,
+          (current) => current + quantity,
+          ifAbsent: () => quantity,
+        );
+      }
+
       for (final entry in quantitiesByVariant.entries) {
         final referenceId = _uuidOrFallback(inventoryReferenceSource);
-        final res = await supabase.rpc(
-          'apply_inventory_movement',
-          params: {
-            'p_branch_id': branchId,
-            'p_variant_id': entry.key,
-            'p_type': 'OUT',
-            'p_quantity': entry.value,
-            'p_reference_type': 'ORDER',
-            'p_reference_id': referenceId,
-            'p_reason': 'pos_order',
-            'p_created_by': createdById,
-          },
+        final res = await _applyInventoryMovementWithFallback(
+          branchId: branchId,
+          variantId: entry.key,
+          quantity: entry.value,
+          direction: _InventoryMovementDirection.outbound,
+          referenceId: referenceId,
+          createdById: createdById,
         );
-        print('STOCK UPDATED: $res');
+        debugPrint('STOCK UPDATED: $res');
         appliedEntries.add(entry);
       }
+
+      final scopedOrderId = _trimToNull(orderId);
+      if (scopedOrderId != null) {
+        await _db.markSynced(scopedOrderId, null);
+      }
     } catch (e) {
-      print('CHECKOUT ERROR: $e');
+      debugPrint('CHECKOUT ERROR: $e');
       for (final entry in appliedEntries.reversed) {
         try {
           final rollbackReferenceId = _uuidOrFallback(inventoryReferenceSource);
-          await supabase.rpc(
-            'apply_inventory_movement',
-            params: {
-              'p_branch_id': branchId,
-              'p_variant_id': entry.key,
-              'p_type': 'IN',
-              'p_quantity': entry.value,
-              'p_reference_type': 'ORDER',
-              'p_reference_id': rollbackReferenceId,
-              'p_reason': 'pos_order_rollback',
-              'p_created_by': createdById,
-            },
+          await _applyInventoryMovementWithFallback(
+            branchId: branchId,
+            variantId: entry.key,
+            quantity: entry.value,
+            direction: _InventoryMovementDirection.inbound,
+            referenceId: rollbackReferenceId,
+            createdById: createdById,
           );
         } catch (rollbackError) {
-          print(
-              'CHECKOUT ERROR: rollback failed for ${entry.key}: $rollbackError');
+          debugPrint(
+            'CHECKOUT ERROR: rollback failed for ${entry.key}: $rollbackError',
+          );
         }
       }
+      await _cleanupInsertedOrder(dbOrderId);
       rethrow;
+    }
+  }
+
+  Map<String, dynamic> _buildRemoteOrderPayload({
+    required String schoolId,
+    required String branchId,
+    required String customerName,
+    required double totalAmount,
+    required PaymentMethod paymentMethod,
+    required List<PaymentAllocation> paymentBreakdown,
+    String? customerPhone,
+    String? alternatePhone,
+    String? customerEmail,
+    String? customerAddress,
+    String? city,
+    String? pincode,
+    String? studentName,
+    String? grade,
+    String? className,
+    String? status,
+  }) {
+    final now = DateTime.now().toIso8601String();
+    final normalizedStudentClass = _normalizeStudentClass(
+      className ?? grade,
+    );
+    return <String, dynamic>{
+      'school_id': schoolId.trim(),
+      'branch_id': _trimToNull(branchId),
+      'customer_name': _trimToNull(customerName) ?? 'Walk-in Customer',
+      'phone': _trimToNull(customerPhone),
+      'alternate_phone': _trimToNull(alternatePhone),
+      'email': _trimToNull(customerEmail),
+      'address': _trimToNull(customerAddress) ?? '-',
+      'city': _trimToNull(city),
+      'pincode': _trimToNull(pincode),
+      'student_name': _trimToNull(studentName),
+      'grade': normalizedStudentClass,
+      'student_class': normalizedStudentClass,
+      'total_amount': totalAmount,
+      'payment_mode': _resolveRemotePaymentMode(
+        paymentMethod,
+        paymentBreakdown,
+      ),
+      'status': _normalizeRemoteStatus(status),
+      'created_at': now,
+      'updated_at': now,
+    }..removeWhere((_, value) => value == null);
+  }
+
+  String _resolveRemotePaymentMode(
+    PaymentMethod paymentMethod,
+    List<PaymentAllocation> paymentBreakdown,
+  ) {
+    final methods = paymentBreakdown.map((entry) => entry.method).toSet();
+    final isOnlineOnly = methods.isNotEmpty &&
+        methods.every(
+          (method) =>
+              method == PaymentMethod.upi || method == PaymentMethod.card,
+        );
+
+    if (paymentMethod == PaymentMethod.upi ||
+        paymentMethod == PaymentMethod.card ||
+        isOnlineOnly) {
+      return 'ONLINE';
+    }
+    return 'UNKNOWN';
+  }
+
+  String _normalizeRemoteStatus(String? status) {
+    final normalized = status?.trim().toUpperCase();
+    if (normalized == null || normalized.isEmpty) {
+      return 'PLACED';
+    }
+    return normalized;
+  }
+
+  String? _normalizeStudentClass(String? value) {
+    final trimmed = _trimToNull(value);
+    return trimmed?.toUpperCase();
+  }
+
+  Future<dynamic> _applyInventoryMovementWithFallback({
+    required String branchId,
+    required String variantId,
+    required int quantity,
+    required _InventoryMovementDirection direction,
+    required String referenceId,
+    required String? createdById,
+  }) async {
+    try {
+      return await _supabase.rpc(
+        'apply_inventory_movement',
+        params: {
+          'p_branch_id': branchId,
+          'p_variant_id': variantId,
+          'p_type': direction.rpcType,
+          'p_quantity': quantity,
+          'p_reference_type': 'ORDER',
+          'p_reference_id': referenceId,
+          'p_reason': direction.reason,
+          'p_created_by': createdById,
+        },
+      );
+    } on PostgrestException catch (error) {
+      debugPrint(
+        'POS INVENTORY WARN: RPC apply_inventory_movement failed, falling back to direct branch_inventory update. $error',
+      );
+      final updatedStock = await _applyDirectInventoryUpdate(
+        branchId: branchId,
+        variantId: variantId,
+        quantity: quantity,
+        direction: direction,
+      );
+      return {'fallback': 'branch_inventory', 'stock': updatedStock};
+    }
+  }
+
+  Future<int> _applyDirectInventoryUpdate({
+    required String branchId,
+    required String variantId,
+    required int quantity,
+    required _InventoryMovementDirection direction,
+  }) async {
+    final row = await _supabase
+        .from('branch_inventory')
+        .select('stock')
+        .eq('branch_id', branchId)
+        .eq('variant_id', variantId)
+        .maybeSingle();
+
+    if (row == null) {
+      throw StateError(
+        'Branch inventory row not found for branch $branchId and variant $variantId',
+      );
+    }
+
+    final currentStock = _asInt(row['stock']) ?? 0;
+    final nextStock = direction == _InventoryMovementDirection.outbound
+        ? currentStock - quantity
+        : currentStock + quantity;
+
+    if (nextStock < 0) {
+      throw StateError(
+        'Insufficient stock for variant $variantId in branch $branchId',
+      );
+    }
+
+    await _supabase
+        .from('branch_inventory')
+        .update({'stock': nextStock})
+        .eq('branch_id', branchId)
+        .eq('variant_id', variantId);
+
+    return nextStock;
+  }
+
+  Future<void> _cleanupInsertedOrder(dynamic orderId) async {
+    if (orderId == null) {
+      return;
+    }
+
+    try {
+      await _supabase.from('order_items').delete().eq('order_id', orderId);
+    } catch (error) {
+      debugPrint(
+          'POS CLEANUP WARN: could not delete order_items for $orderId: $error');
+    }
+
+    try {
+      await _supabase.from('orders').delete().eq('id', orderId);
+    } catch (error) {
+      debugPrint('POS CLEANUP WARN: could not delete order $orderId: $error');
     }
   }
 
@@ -263,42 +430,8 @@ class OrderRepositoryImpl implements OrderRepository {
           }
           continue;
         }
-        print(
+        debugPrint(
           'POS ORDER WARN: orders column "$missingColumn" not found, retrying without it.',
-        );
-        mutablePayload.remove(missingColumn);
-      }
-    }
-  }
-
-  Future<void> _enforcePosSourceMetadataById(dynamic orderId) async {
-    if (orderId == null) return;
-
-    final mutablePayload = <String, dynamic>{
-      'source': 'offline',
-      'channel': 'pos',
-      'order_source': 'pos',
-      'order_channel': 'pos',
-      'created_via': 'pos_app',
-      'customer_type': 'Walk-in Customer',
-      'buyer_type': 'Walk-in Customer',
-      'updated_at': DateTime.now().toIso8601String(),
-    };
-
-    while (mutablePayload.isNotEmpty) {
-      try {
-        await _supabase.from('orders').update(mutablePayload).eq('id', orderId);
-        print('POS SOURCE ENFORCED FOR ORDER: $orderId');
-        return;
-      } on PostgrestException catch (e) {
-        final missingColumn = _extractMissingOrdersColumn(e.message);
-        if (missingColumn == null ||
-            !mutablePayload.containsKey(missingColumn)) {
-          print('POS SOURCE ENFORCE WARN: $e');
-          return;
-        }
-        print(
-          'POS SOURCE ENFORCE WARN: orders column "$missingColumn" not found, retrying without it.',
         );
         mutablePayload.remove(missingColumn);
       }
@@ -318,13 +451,13 @@ class OrderRepositoryImpl implements OrderRepository {
     final currentStatus = payload['status']?.toString();
     if (currentStatus == 'Placed') {
       payload['status'] = 'placed';
-      print(
+      debugPrint(
           'POS ORDER WARN: status enum rejected "Placed", retrying with "placed".');
       return true;
     }
 
     payload.remove('status');
-    print(
+    debugPrint(
         'POS ORDER WARN: status enum still incompatible, retrying without status.');
     return true;
   }
@@ -394,7 +527,42 @@ class OrderRepositoryImpl implements OrderRepository {
         });
         if (!removed) rethrow;
 
-        print(
+        debugPrint(
+          'POS ORDER WARN: order_items column "$missingColumn" not found, retrying without it.',
+        );
+      }
+    }
+  }
+
+  Future<void> _insertStoredOrderItemsWithSchemaFallback({
+    required List<Map<String, dynamic>> items,
+    required dynamic orderId,
+  }) async {
+    final mutablePayloads = items
+        .map(
+          (item) => <String, dynamic>{
+            'order_id': orderId,
+            'product_id': item['product_id'],
+            'variant_id': item['variant_id'],
+            'quantity': item['quantity'],
+            'price': item['price'] ?? item['unit_price'],
+          }..removeWhere((_, value) => value == null),
+        )
+        .toList();
+
+    while (true) {
+      try {
+        await _supabase.from('order_items').insert(mutablePayloads);
+        return;
+      } on PostgrestException catch (e) {
+        final missingColumn = _extractMissingOrderItemsColumn(e.message);
+        if (missingColumn == null) rethrow;
+
+        for (final payload in mutablePayloads) {
+          payload.remove(missingColumn);
+        }
+
+        debugPrint(
           'POS ORDER WARN: order_items column "$missingColumn" not found, retrying without it.',
         );
       }
@@ -425,45 +593,19 @@ class OrderRepositoryImpl implements OrderRepository {
     required String schoolId,
     required String schoolName,
   }) {
-    final productName = item.product.name.trim();
-    final variantNameRaw = item.variant.name.trim();
-    final variantDisplayName = _formatVariantLabel(variantNameRaw);
-    final title = '$productName ($variantDisplayName)';
     final quantity = item.quantity;
     final unitPrice = item.variant.price;
-    final lineTotal = item.lineTotal;
 
     final payload = <String, dynamic>{
       'order_id': orderId,
       'product_id': item.product.id,
       'variant_id': item.variant.id,
-      'name': title,
-      'title': title,
-      'display_name': title,
-      'product_name': productName,
-      'variant_name': variantDisplayName,
-      'size': variantNameRaw,
-      'sku': item.variant.sku,
-      'school_id': schoolId,
-      'school_name': schoolName,
-      'category': item.product.category,
-      'image_url': item.product.imageUrl,
       'quantity': quantity,
-      'unit_price': unitPrice,
       'price': unitPrice,
-      'line_total': lineTotal,
-      'product_snapshot': {
-        'product_name': productName,
-        'variant_name': variantDisplayName,
-        'size': variantNameRaw,
-        'school_name': schoolName,
-        'image_url': item.product.imageUrl,
-        'sku': item.variant.sku,
-      },
     };
 
-    print('POS ORDER ITEM PAYLOAD:');
-    print(payload);
+    debugPrint('POS ORDER ITEM PAYLOAD:');
+    debugPrint('$payload');
     return payload;
   }
 
@@ -483,40 +625,6 @@ class OrderRepositoryImpl implements OrderRepository {
     }
 
     return null;
-  }
-
-  String _formatVariantLabel(String variantName) {
-    final trimmed = variantName.trim();
-    if (trimmed.isEmpty) return 'Size';
-    if (trimmed.toLowerCase().startsWith('size ')) return trimmed;
-    return 'Size $trimmed';
-  }
-
-  List<Map<String, dynamic>> _buildOrderItemsSummary({
-    required List<CartItem> items,
-    required String schoolName,
-  }) {
-    return items.map(
-      (item) {
-        final productName = item.product.name.trim();
-        final variantLabel = _formatVariantLabel(item.variant.name);
-        return <String, dynamic>{
-          'product_id': item.product.id,
-          'product_name': productName,
-          'variant_id': item.variant.id,
-          'variant_name': variantLabel,
-          'size': item.variant.name,
-          'sku': item.variant.sku,
-          'quantity': item.quantity,
-          'unit_price': item.variant.price,
-          'line_total': item.lineTotal,
-          'school_name': schoolName,
-          'category': item.product.category,
-          'name': '$productName ($variantLabel)',
-          'title': '$productName ($variantLabel)',
-        };
-      },
-    ).toList();
   }
 
   String _uuidOrFallback(String? value) {
@@ -571,24 +679,14 @@ class OrderRepositoryImpl implements OrderRepository {
   @override
   Future<bool> syncOrder(Order order) async {
     try {
-      final payload = await _syncPayload(order);
-      await _supabase.from('orders').upsert(
-            payload,
-            onConflict: 'offline_id',
-          );
-      final response = await _supabase
-          .from('orders')
-          .select('id')
-          .eq('offline_id', order.offlineId)
-          .maybeSingle();
-
-      final remoteId = _asInt(response?['id']);
-      if (remoteId != null) {
-        await _enforcePosSourceMetadataById(remoteId);
+      final row = await _db.getOrder(order.offlineId);
+      if (row == null) {
+        throw StateError('Local order row not found for ${order.offlineId}');
       }
-      await _db.markSynced(order.offlineId, remoteId);
+
+      await _syncStoredOrderRow(order.offlineId, row);
+      await _db.markSynced(order.offlineId, null);
       order.syncStatus = OrderSyncStatus.synced;
-      order.remoteId = remoteId;
       return true;
     } on PostgrestException catch (e) {
       await _db.markFailed(order.offlineId, e.message);
@@ -613,9 +711,108 @@ class OrderRepositoryImpl implements OrderRepository {
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
+  Future<void> _syncStoredOrderRow(
+    String offlineId,
+    Map<String, dynamic> row,
+  ) async {
+    final customer =
+        jsonDecode(row['customer_json'] as String) as Map<String, dynamic>;
+    final items = (jsonDecode(row['items_json'] as String) as List<dynamic>)
+        .whereType<Map<String, dynamic>>()
+        .toList();
+    final metadataRow = row['metadata_json']?.toString();
+    final metadataJson = metadataRow == null || metadataRow.isEmpty
+        ? const <String, dynamic>{}
+        : jsonDecode(metadataRow) as Map<String, dynamic>;
+    final metadata = metadataJson['metadata'] is Map<String, dynamic>
+        ? metadataJson['metadata'] as Map<String, dynamic>
+        : const <String, dynamic>{};
+    final paymentBreakdown =
+        (metadataJson['payment_breakdown'] as List<dynamic>? ??
+                const <dynamic>[])
+            .whereType<Map<String, dynamic>>()
+            .map(PaymentAllocation.fromJson)
+            .toList();
+    final paymentMethod = PaymentMethod.values.firstWhere(
+      (method) => method.name == row['payment_method'],
+      orElse: () => PaymentMethod.cash,
+    );
+
+    final payload = _buildRemoteOrderPayload(
+      schoolId: row['school_id'].toString(),
+      branchId: metadata['branch_id']?.toString() ?? '',
+      customerName: customer['name']?.toString() ??
+          metadata['customer_name']?.toString() ??
+          'Walk-in Customer',
+      customerPhone:
+          customer['is_walk_in'] == true ? null : customer['phone']?.toString(),
+      alternatePhone: customer['alternate_phone']?.toString(),
+      customerEmail: null,
+      customerAddress: customer['address']?.toString(),
+      city: customer['city']?.toString(),
+      pincode: customer['pincode']?.toString(),
+      studentName: customer['student_name']?.toString(),
+      grade: customer['grade']?.toString() ??
+          customer['student_class']?.toString(),
+      className: customer['class_name']?.toString() ??
+          customer['student_class']?.toString(),
+      totalAmount: (row['total'] as num).toDouble(),
+      paymentMethod: paymentMethod,
+      paymentBreakdown: paymentBreakdown,
+      status: 'PLACED',
+    );
+
+    final orderRes = await _insertOrderWithSchemaFallback(payload);
+    final dbOrderId = orderRes['id'];
+    final inventoryReferenceSource = dbOrderId?.toString() ?? offlineId;
+
+    try {
+      await _insertStoredOrderItemsWithSchemaFallback(
+        items: items,
+        orderId: dbOrderId,
+      );
+
+      final quantitiesByVariant = <String, int>{};
+      for (final item in items) {
+        final variantId = item['variant_id']?.toString();
+        if (variantId == null || variantId.isEmpty) continue;
+        final quantity = _asInt(item['quantity']) ?? 0;
+        if (quantity <= 0) continue;
+        quantitiesByVariant.update(
+          variantId,
+          (current) => current + quantity,
+          ifAbsent: () => quantity,
+        );
+      }
+
+      for (final entry in quantitiesByVariant.entries) {
+        await _applyInventoryMovementWithFallback(
+          branchId: metadata['branch_id']?.toString() ?? '',
+          variantId: entry.key,
+          quantity: entry.value,
+          direction: _InventoryMovementDirection.outbound,
+          referenceId: _uuidOrFallback(inventoryReferenceSource),
+          createdById: await _resolveCreatedById(),
+        );
+      }
+    } catch (error) {
+      await _cleanupInsertedOrder(dbOrderId);
+      rethrow;
+    }
+  }
+
   Order _rowToOrder(Map<String, dynamic> row) {
     final customerMap =
         jsonDecode(row['customer_json'] as String) as Map<String, dynamic>;
+    final metadataRow = row['metadata_json']?.toString();
+    final metadataJson = metadataRow == null || metadataRow.isEmpty
+        ? const <String, dynamic>{}
+        : jsonDecode(metadataRow) as Map<String, dynamic>;
+    final paymentBreakdownJson =
+        (metadataJson['payment_breakdown'] as List<dynamic>? ?? const []);
+    final orderMetadata = metadataJson['metadata'] is Map<String, dynamic>
+        ? metadataJson['metadata'] as Map<String, dynamic>
+        : const <String, dynamic>{};
 
     return Order(
       offlineId: row['offline_id'] as String,
@@ -629,99 +826,15 @@ class OrderRepositoryImpl implements OrderRepository {
         (m) => m.name == row['payment_method'],
         orElse: () => PaymentMethod.cash,
       ),
+      paymentBreakdown: paymentBreakdownJson
+          .whereType<Map<String, dynamic>>()
+          .map(PaymentAllocation.fromJson)
+          .toList(),
+      metadata: orderMetadata,
       createdAt: DateTime.parse(row['created_at'] as String),
       syncStatus: OrderSyncStatus.pending,
       remoteId: row['remote_id'] as int?,
     );
-  }
-
-  /// Returns a full JSON-serializable map for sync, using the stored JSON
-  /// directly instead of re-constructing domain objects.
-  Map<String, dynamic> rawOrderJson(Map<String, dynamic> row) {
-    final customer =
-        jsonDecode(row['customer_json'] as String) as Map<String, dynamic>;
-    final items = (jsonDecode(row['items_json'] as String) as List<dynamic>)
-        .whereType<Map<String, dynamic>>()
-        .map((item) => {
-              'product_id': item['product_id'],
-              'variant_id': item['variant_id'],
-              'product_name': item['product_name'],
-              'variant_name': item['variant_name'],
-              'size': item['size'],
-              'sku': item['sku'],
-              'school_id': item['school_id'],
-              'school_name': item['school_name'],
-              'category': item['category'],
-              'image_url': item['image_url'],
-              'quantity': item['quantity'],
-              'price': item['price'] ?? item['unit_price'],
-              'unit_price': item['unit_price'] ?? item['price'],
-              'line_total': item['line_total'],
-              'name': item['name'],
-              'title': item['title'],
-              'display_name': item['display_name'],
-              'product_snapshot': item['product_snapshot'],
-            })
-        .toList();
-
-    return {
-      'offline_id': row['offline_id'],
-      'school_id': row['school_id'],
-      'customer': {
-        'phone': customer['is_walk_in'] == true ? null : customer['phone'],
-        'name': customer['name'],
-        'alternate_phone': customer['alternate_phone'],
-        'address': customer['address'],
-        'city': customer['city'],
-        'pincode': customer['pincode'],
-        'is_walk_in': customer['is_walk_in'] ?? false,
-      },
-      'student': {
-        'name': customer['student_name'],
-        'class': customer['class_name'] ?? customer['student_class'],
-        'class_name': customer['class_name'] ?? customer['student_class'],
-        'grade': customer['grade'] ?? customer['student_class'],
-      },
-      'items': items,
-      'subtotal': row['subtotal'],
-      'discount': row['discount_amount'],
-      'total': row['total'],
-      'payment_method': row['payment_method'],
-      'created_at': row['created_at'],
-      'device_id': row['device_id'],
-      'schema_version': row['schema_version'] ?? 1,
-      'source': 'offline',
-      'channel': 'pos',
-      'order_source': 'pos',
-      'order_channel': 'pos',
-      'created_via': 'pos_app',
-      'customer_type': 'Walk-in Customer',
-      'buyer_type': 'Walk-in Customer',
-    };
-  }
-
-  Future<Map<String, dynamic>> _syncPayload(Order order) async {
-    if (order.items.isNotEmpty) {
-      return _withPosSourceMetadata(order.toJson());
-    }
-
-    final row = await _db.getOrder(order.offlineId);
-    if (row != null) return _withPosSourceMetadata(rawOrderJson(row));
-
-    return _withPosSourceMetadata(order.toJson());
-  }
-
-  Map<String, dynamic> _withPosSourceMetadata(Map<String, dynamic> payload) {
-    return {
-      ...payload,
-      'source': 'offline',
-      'channel': 'pos',
-      'order_source': 'pos',
-      'order_channel': 'pos',
-      'created_via': 'pos_app',
-      'customer_type': 'Walk-in Customer',
-      'buyer_type': 'Walk-in Customer',
-    };
   }
 
   int? _asInt(dynamic value) {

@@ -22,6 +22,31 @@ class CartItem {
     );
   }
 
+  Map<String, dynamic> toJson() => {
+        'product': product.toJson(),
+        'variant': variant.toJson(),
+        'quantity': quantity,
+      };
+
+  factory CartItem.fromJson(Map<String, dynamic> json) {
+    final productJson = json['product'];
+    final variantJson = json['variant'];
+
+    return CartItem(
+      product: Product.fromJson(
+        productJson is Map<String, dynamic>
+            ? productJson
+            : const <String, dynamic>{},
+      ),
+      variant: Variant.fromJson(
+        variantJson is Map<String, dynamic>
+            ? variantJson
+            : const <String, dynamic>{'price': 0},
+      ),
+      quantity: _asInt(json['quantity']).clamp(1, 1 << 31),
+    );
+  }
+
   /// Unique key for deduplication — product + variant
   String get key => '${product.id}_${variant.id}';
 
@@ -58,5 +83,11 @@ class CartItem {
     if (trimmed.isEmpty) return 'Size';
     if (trimmed.toLowerCase().startsWith('size ')) return trimmed;
     return 'Size $trimmed';
+  }
+
+  static int _asInt(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '') ?? 1;
   }
 }

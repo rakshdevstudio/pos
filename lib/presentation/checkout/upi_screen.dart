@@ -88,9 +88,8 @@ class _UpiScreenState extends State<UpiScreen>
             // QR content
             Expanded(
               child: Center(
-                child: _paymentConfirmed
-                    ? _buildSuccessState()
-                    : _buildQRState(),
+                child:
+                    _paymentConfirmed ? _buildSuccessState() : _buildQRState(),
               ),
             ),
 

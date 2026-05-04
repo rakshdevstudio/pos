@@ -32,9 +32,8 @@ class IllumeButton extends StatelessWidget {
             ? AppColors.surfaceElevated
             : AppColors.accent;
 
-    final fg = isDanger || isSecondary
-        ? AppColors.textPrimary
-        : AppColors.background;
+    final fg =
+        isDanger || isSecondary ? AppColors.textPrimary : AppColors.background;
 
     final border = isSecondary
         ? const BorderSide(color: AppColors.border, width: 1.5)

@@ -4,7 +4,10 @@ import '../../../core/constants/constants.dart';
 import '../../../services/sync_service.dart';
 
 class SyncStatusBadge extends ConsumerWidget {
-  const SyncStatusBadge({super.key});
+  final bool compact;
+
+  const SyncStatusBadge({super.key, this.compact = false});
+  const SyncStatusBadge.compact({super.key}) : compact = true;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -13,26 +16,35 @@ class SyncStatusBadge extends ConsumerWidget {
 
     return AnimatedSwitcher(
       duration: const Duration(milliseconds: AppDimens.animMedium),
-      child: _buildBadge(syncState, pendingCount),
+      child: _buildBadge(syncState, pendingCount, compact: compact),
     );
   }
 
-  Widget _buildBadge(SyncState state, int pendingCount) {
+  Widget _buildBadge(SyncState state, int pendingCount,
+      {required bool compact}) {
     switch (state) {
       case SyncState.offline:
         return _badge(
           key: 'offline',
           icon: Icons.cloud_off_rounded,
-          label: pendingCount > 0 ? 'OFFLINE ($pendingCount unsynced)' : AppStrings.offline,
+          label: compact
+              ? (pendingCount > 0
+                  ? '$pendingCount OFFLINE'
+                  : AppStrings.offline)
+              : pendingCount > 0
+                  ? 'OFFLINE ($pendingCount unsynced)'
+                  : AppStrings.offline,
           color: AppColors.error,
+          compact: compact,
         );
       case SyncState.syncing:
         return _badge(
           key: 'syncing',
           icon: Icons.sync_rounded,
-          label: AppStrings.syncing,
+          label: compact ? 'SYNC' : AppStrings.syncing,
           color: AppColors.warning,
           spin: true,
+          compact: compact,
         );
       case SyncState.done:
         return _badge(
@@ -40,6 +52,7 @@ class SyncStatusBadge extends ConsumerWidget {
           icon: Icons.cloud_done_rounded,
           label: AppStrings.online,
           color: AppColors.success,
+          compact: compact,
         );
       case SyncState.idle:
         return const SizedBox.shrink(key: ValueKey('idle'));
@@ -51,6 +64,7 @@ class SyncStatusBadge extends ConsumerWidget {
     required IconData icon,
     required String label,
     required Color color,
+    required bool compact,
     bool spin = false,
   }) {
     return Container(
@@ -83,8 +97,8 @@ class SyncStatusBadge extends ConsumerWidget {
             style: AppTypography.labelMedium.copyWith(
               color: color,
               fontWeight: FontWeight.w700,
-              letterSpacing: 1.0,
-              fontSize: 10,
+              letterSpacing: compact ? 0.6 : 1.0,
+              fontSize: compact ? 9 : 10,
             ),
           ),
         ],

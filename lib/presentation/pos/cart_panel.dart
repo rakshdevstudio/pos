@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../../core/constants/constants.dart';
+import '../../core/providers/providers.dart';
 import '../../domain/models/models.dart';
 import '../../services/cart_service.dart';
 import '../shared/widgets/illume_button.dart';
@@ -11,6 +12,7 @@ import '../checkout/checkout_sheet.dart';
 import 'numpad_sheet.dart';
 
 final _currencyFmt = NumberFormat('#,##0', 'en_IN');
+final compactCartExpandedProvider = StateProvider<bool>((ref) => false);
 
 class CartPanel extends ConsumerStatefulWidget {
   final bool compactMobile;
@@ -125,7 +127,11 @@ class _CartPanelState extends ConsumerState<CartPanel> {
                             ),
                           ],
                         ),
-                      );
+                      ).then((_) {
+                        ref
+                            .read(scannerRefocusRequestProvider.notifier)
+                            .state++;
+                      });
                     },
                     child: Text(
                       'Clear',
@@ -170,6 +176,7 @@ class _CartPanelState extends ConsumerState<CartPanel> {
 
   Widget _buildCompactMobilePanel(CartState cart) {
     final hasItems = cart.items.isNotEmpty;
+    final isExpanded = ref.watch(compactCartExpandedProvider);
 
     return Container(
       width: double.infinity,
@@ -195,13 +202,50 @@ class _CartPanelState extends ConsumerState<CartPanel> {
             ),
             child: Row(
               children: [
-                Text(
-                  AppStrings.cart,
-                  style: AppTypography.titleLarge.copyWith(
-                    color: AppColors.textPrimary,
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () => ref
+                        .read(compactCartExpandedProvider.notifier)
+                        .state = !isExpanded,
+                    child: Row(
+                      children: [
+                        Text(
+                          AppStrings.cart,
+                          style: AppTypography.titleLarge.copyWith(
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                        const SizedBox(width: AppDimens.spacingSM),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: AppDimens.spacingSM,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: AppColors.surfaceHighlight,
+                            borderRadius: BorderRadius.circular(
+                              AppDimens.radiusFull,
+                            ),
+                          ),
+                          child: Text(
+                            '${cart.itemCount} items',
+                            style: AppTypography.labelMedium.copyWith(
+                              color: AppColors.textSecondary,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        const Spacer(),
+                        Icon(
+                          isExpanded
+                              ? Icons.keyboard_arrow_down_rounded
+                              : Icons.keyboard_arrow_up_rounded,
+                          color: AppColors.textMuted,
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-                const Spacer(),
                 if (hasItems)
                   TextButton(
                     onPressed: () {
@@ -242,7 +286,11 @@ class _CartPanelState extends ConsumerState<CartPanel> {
                             ),
                           ],
                         ),
-                      );
+                      ).then((_) {
+                        ref
+                            .read(scannerRefocusRequestProvider.notifier)
+                            .state++;
+                      });
                     },
                     child: Text(
                       'Clear',
@@ -254,34 +302,41 @@ class _CartPanelState extends ConsumerState<CartPanel> {
               ],
             ),
           ),
-          if (hasItems)
-            ListView.separated(
-              controller: _scrollController,
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              padding: const EdgeInsets.symmetric(
-                vertical: AppDimens.spacingSM,
-              ),
-              itemCount: cart.items.length,
-              separatorBuilder: (_, __) => const Divider(
-                color: AppColors.border,
-                height: 1,
-                indent: AppDimens.spacingLG,
-                endIndent: AppDimens.spacingLG,
-              ),
-              itemBuilder: (context, index) {
-                final itemKey = cart.items[index].key;
-                return _CartItemTile(itemId: itemKey, compactMobile: true);
-              },
-            )
-          else
-            Padding(
-              padding: const EdgeInsets.symmetric(
-                horizontal: AppDimens.spacingLG,
-                vertical: AppDimens.spacingXL,
-              ),
-              child: _emptyCart(compact: true),
-            ),
+          AnimatedCrossFade(
+            duration: const Duration(milliseconds: AppDimens.animMedium),
+            crossFadeState: isExpanded
+                ? CrossFadeState.showFirst
+                : CrossFadeState.showSecond,
+            firstChild: hasItems
+                ? ListView.separated(
+                    controller: _scrollController,
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    padding: const EdgeInsets.symmetric(
+                      vertical: AppDimens.spacingSM,
+                    ),
+                    itemCount: cart.items.length,
+                    separatorBuilder: (_, __) => const Divider(
+                      color: AppColors.border,
+                      height: 1,
+                      indent: AppDimens.spacingLG,
+                      endIndent: AppDimens.spacingLG,
+                    ),
+                    itemBuilder: (context, index) {
+                      final itemKey = cart.items[index].key;
+                      return _CartItemTile(
+                          itemId: itemKey, compactMobile: true);
+                    },
+                  )
+                : Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppDimens.spacingLG,
+                      vertical: AppDimens.spacingXL,
+                    ),
+                    child: _emptyCart(compact: true),
+                  ),
+            secondChild: const SizedBox.shrink(),
+          ),
           _CartFooter(cart: cart, compactMobile: true),
         ],
       ),
@@ -406,6 +461,34 @@ class _CartItemTile extends ConsumerWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
+                    if (item.variant.stock > 0 &&
+                        item.variant.stock <= PosConstants.lowStockThreshold)
+                      Padding(
+                        padding:
+                            const EdgeInsets.only(top: AppDimens.spacingXS),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: AppDimens.spacingSM,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: AppColors.warning.withValues(alpha: 0.14),
+                            borderRadius: BorderRadius.circular(
+                              AppDimens.radiusFull,
+                            ),
+                            border: Border.all(
+                              color: AppColors.warning.withValues(alpha: 0.4),
+                            ),
+                          ),
+                          child: Text(
+                            'LOW STOCK',
+                            style: AppTypography.labelMedium.copyWith(
+                              color: AppColors.warning,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                      ),
                   ],
                 ),
               ),
@@ -450,6 +533,9 @@ class _CartItemTile extends ConsumerWidget {
                               title: 'SET QUANTITY',
                             ),
                           );
+                          ref
+                              .read(scannerRefocusRequestProvider.notifier)
+                              .state++;
                           if (newValue != null && newValue >= 0) {
                             ref
                                 .read(cartProvider.notifier)
@@ -500,6 +586,9 @@ class _CartItemTile extends ConsumerWidget {
 
   String _stockText(Variant variant) {
     if (variant.stock <= 0) return 'Out of stock';
+    if (variant.stock <= PosConstants.lowStockThreshold) {
+      return '${variant.stock} left';
+    }
     return '${variant.stock} in stock';
   }
 }
@@ -553,6 +642,25 @@ class _CartFooter extends ConsumerWidget {
       ),
       child: Column(
         children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                '${cart.itemCount} items',
+                style: AppTypography.bodyMedium.copyWith(
+                  color: AppColors.textSecondary,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              Text(
+                'Subtotal ₹${_currencyFmt.format(cart.subtotal)}',
+                style: AppTypography.bodyMedium.copyWith(
+                  color: AppColors.textSecondary,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppDimens.spacingMD),
           // Subtotal
           if (cart.discountAmount > 0) ...[
             Row(
@@ -639,6 +747,7 @@ class _CartFooter extends ConsumerWidget {
                         backgroundColor: Colors.transparent,
                         builder: (_) => const CustomerDetailsSheet(),
                       );
+                      ref.read(scannerRefocusRequestProvider.notifier).state++;
 
                       if (customer != null && context.mounted) {
                         showModalBottomSheet(
@@ -646,7 +755,11 @@ class _CartFooter extends ConsumerWidget {
                           isScrollControlled: true,
                           backgroundColor: Colors.transparent,
                           builder: (_) => CheckoutSheet(customer: customer),
-                        );
+                        ).whenComplete(() {
+                          ref
+                              .read(scannerRefocusRequestProvider.notifier)
+                              .state++;
+                        });
                       }
                     },
             ),

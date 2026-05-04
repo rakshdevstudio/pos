@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../core/constants/constants.dart';
+import '../../core/providers/providers.dart';
 import '../../domain/models/models.dart';
 import '../../services/cart_service.dart';
 
@@ -29,6 +30,8 @@ class _ProductCardState extends State<ProductCard> {
       (sum, v) => sum + v.stock,
     );
     final isOutOfStock = totalStock <= 0;
+    final isLowStock =
+        !isOutOfStock && totalStock <= PosConstants.lowStockThreshold;
     final canPurchase = widget.product.variants.any((v) => v.stock > 0);
     return MouseRegion(
       onEnter: (_) => setState(() => _isHovered = true),
@@ -80,8 +83,16 @@ class _ProductCardState extends State<ProductCard> {
                       bottom: AppDimens.spacingMD,
                       left: AppDimens.spacingMD,
                       child: _StockBadge(
-                        label: isOutOfStock ? 'Out of stock' : 'In stock',
-                        available: !isOutOfStock,
+                        label: isOutOfStock
+                            ? 'Out of stock'
+                            : isLowStock
+                                ? 'Low stock'
+                                : 'In stock',
+                        tone: isOutOfStock
+                            ? _StockBadgeTone.error
+                            : isLowStock
+                                ? _StockBadgeTone.warning
+                                : _StockBadgeTone.success,
                       ),
                     ),
                     Positioned(
@@ -184,19 +195,23 @@ class _ProductCardState extends State<ProductCard> {
 
 class _StockBadge extends StatelessWidget {
   final String label;
-  final bool available;
+  final _StockBadgeTone tone;
 
   const _StockBadge({
     required this.label,
-    required this.available,
+    required this.tone,
   });
 
   @override
   Widget build(BuildContext context) {
-    final backgroundColor = available
-        ? AppColors.background.withValues(alpha: 0.72)
-        : AppColors.error.withValues(alpha: 0.9);
-    final textColor = available ? AppColors.textPrimary : AppColors.background;
+    final backgroundColor = switch (tone) {
+      _StockBadgeTone.success => AppColors.background.withValues(alpha: 0.72),
+      _StockBadgeTone.warning => AppColors.warning.withValues(alpha: 0.92),
+      _StockBadgeTone.error => AppColors.error.withValues(alpha: 0.9),
+    };
+    final textColor = tone == _StockBadgeTone.success
+        ? AppColors.textPrimary
+        : AppColors.background;
 
     return Container(
       constraints: const BoxConstraints(maxWidth: 88),
@@ -220,6 +235,8 @@ class _StockBadge extends StatelessWidget {
     );
   }
 }
+
+enum _StockBadgeTone { success, warning, error }
 
 // Variant selection bottom sheet
 class VariantSheet extends ConsumerWidget {
@@ -345,22 +362,47 @@ class VariantSheet extends ConsumerWidget {
                     product: product,
                     variant: variant,
                     onAdd: () {
-                      final added = ref
+                      final result = ref
                           .read(cartProvider.notifier)
-                          .addItem(product, variant);
-                      if (!added) return;
+                          .addItemWithResult(product, variant);
+                      if (result != CartAddResult.added) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              result == CartAddResult.stockLimitReached
+                                  ? 'Only ${variant.stock} available'
+                                  : 'Out of stock',
+                            ),
+                          ),
+                        );
+                        return;
+                      }
                       Navigator.pop(context);
+                      ref.read(scannerRefocusRequestProvider.notifier).state++;
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
                           content: Row(
                             children: [
-                              const Icon(Icons.check_circle_rounded,
-                                  color: AppColors.success, size: 16),
+                              Icon(
+                                variant.stock <= PosConstants.lowStockThreshold
+                                    ? Icons.warning_amber_rounded
+                                    : Icons.check_circle_rounded,
+                                color: variant.stock <=
+                                        PosConstants.lowStockThreshold
+                                    ? AppColors.warning
+                                    : AppColors.success,
+                                size: 16,
+                              ),
                               const SizedBox(width: AppDimens.spacingSM),
-                              Text(
-                                '${product.name} (${variant.size}) added',
-                                style: AppTypography.bodySmall.copyWith(
-                                  color: AppColors.textPrimary,
+                              Expanded(
+                                child: Text(
+                                  variant.stock <=
+                                          PosConstants.lowStockThreshold
+                                      ? '${product.name} (${variant.size}) added • Low stock'
+                                      : '${product.name} (${variant.size}) added',
+                                  style: AppTypography.bodySmall.copyWith(
+                                    color: AppColors.textPrimary,
+                                  ),
                                 ),
                               ),
                             ],
@@ -463,6 +505,9 @@ class _VariantTile extends StatelessWidget {
 
   String _stockText(Variant variant) {
     if (variant.stock <= 0) return 'Out of stock';
+    if (variant.stock <= PosConstants.lowStockThreshold) {
+      return 'Low stock: ${variant.stock} left';
+    }
     return 'In stock';
   }
 }

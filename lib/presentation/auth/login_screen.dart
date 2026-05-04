@@ -59,7 +59,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
 
     try {
       // Mock login for UI testing
-      if (_emailController.text.trim() == 'admin@illume.in' && 
+      if (_emailController.text.trim() == 'admin@illume.in' &&
           _passwordController.text == 'admin123') {
         await Future.delayed(const Duration(seconds: 1)); // Simulate network
         await ApiClient.saveToken('mock_admin_token_12345');
@@ -82,8 +82,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
         await ApiClient.saveToken(token);
         if (mounted) context.go('/schools');
       } else {
-        ref.read(_loginErrorProvider.notifier).state =
-            AppStrings.loginError;
+        ref.read(_loginErrorProvider.notifier).state = AppStrings.loginError;
       }
     } catch (e) {
       ref.read(_loginErrorProvider.notifier).state = AppStrings.loginError;
@@ -98,7 +97,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
   Widget build(BuildContext context) {
     final isLoading = ref.watch(_loginLoadingProvider);
     final error = ref.watch(_loginErrorProvider);
-    final size = MediaQuery.of(context).size;
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -131,8 +129,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                                     color: AppColors.surface,
                                     borderRadius: BorderRadius.circular(
                                         AppDimens.radiusLG),
-                                    border: Border.all(
-                                        color: AppColors.border),
+                                    border: Border.all(color: AppColors.border),
                                   ),
                                   child: const Icon(
                                     Icons.diamond_outlined,

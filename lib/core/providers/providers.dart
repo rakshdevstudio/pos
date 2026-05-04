@@ -6,6 +6,7 @@ import '../../data/repositories/order_repository_impl.dart';
 import '../../data/repositories/product_repository_impl.dart';
 import '../../data/repositories/school_repository_impl.dart';
 import '../../services/barcode_lookup_service.dart';
+import '../../services/held_bill_service.dart';
 
 /// Singleton ApiClient — single Dio instance per app lifetime.
 final apiClientProvider = Provider<ApiClient>((_) => ApiClient());
@@ -26,6 +27,12 @@ final productRepoProvider = Provider<ProductRepositoryImpl>((ref) {
 final barcodeLookupServiceProvider = Provider<BarcodeLookupService>((ref) {
   return BarcodeLookupService(ref.read(productRepoProvider));
 });
+
+final heldBillServiceProvider = Provider<HeldBillService>((ref) {
+  return const HeldBillService();
+});
+
+final scannerRefocusRequestProvider = StateProvider<int>((ref) => 0);
 
 /// School repository.
 final schoolRepoProvider = Provider<SchoolRepositoryImpl>((ref) {

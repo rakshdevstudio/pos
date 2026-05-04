@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import '../../core/constants/constants.dart';
-import '../shared/widgets/illume_button.dart';
 
 class NumpadSheet extends StatefulWidget {
   final int initialValue;
@@ -77,7 +76,8 @@ class _NumpadSheetState extends State<NumpadSheet> {
               ),
               IconButton(
                 onPressed: () => Navigator.pop(context),
-                icon: const Icon(Icons.close_rounded, color: AppColors.textMuted),
+                icon:
+                    const Icon(Icons.close_rounded, color: AppColors.textMuted),
               ),
             ],
           ),
@@ -116,31 +116,39 @@ class _NumpadSheetState extends State<NumpadSheet> {
       children: keys.map((key) {
         return Expanded(
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: AppDimens.spacingSM),
+            padding:
+                const EdgeInsets.symmetric(horizontal: AppDimens.spacingSM),
             child: GestureDetector(
               onTap: () {
-                 if (key == 'SAVE') {
-                   Navigator.pop(context, int.tryParse(_value) ?? 0);
-                 } else {
-                   _onKey(key);
-                 }
+                if (key == 'SAVE') {
+                  Navigator.pop(context, int.tryParse(_value) ?? 0);
+                } else {
+                  _onKey(key);
+                }
               },
               child: Container(
                 height: 64,
                 decoration: BoxDecoration(
-                  color: key == 'SAVE' ? AppColors.accent : AppColors.background,
+                  color:
+                      key == 'SAVE' ? AppColors.accent : AppColors.background,
                   borderRadius: BorderRadius.circular(AppDimens.radiusLG),
-                  border: key == 'SAVE' ? null : Border.all(color: AppColors.border),
+                  border: key == 'SAVE'
+                      ? null
+                      : Border.all(color: AppColors.border),
                 ),
                 alignment: Alignment.center,
                 child: key == 'SAVE'
-                    ? const Icon(Icons.check_rounded, color: AppColors.background)
+                    ? const Icon(Icons.check_rounded,
+                        color: AppColors.background)
                     : key == '<'
-                        ? const Icon(Icons.backspace_outlined, color: AppColors.textPrimary)
+                        ? const Icon(Icons.backspace_outlined,
+                            color: AppColors.textPrimary)
                         : Text(
                             key,
                             style: AppTypography.titleLarge.copyWith(
-                              color: key == 'C' ? AppColors.error : AppColors.textPrimary,
+                              color: key == 'C'
+                                  ? AppColors.error
+                                  : AppColors.textPrimary,
                               fontWeight: FontWeight.w600,
                               fontSize: 24,
                             ),

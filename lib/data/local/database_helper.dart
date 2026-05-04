@@ -13,7 +13,7 @@ class DatabaseHelper {
   DatabaseHelper._();
   static final DatabaseHelper instance = DatabaseHelper._();
 
-  static const int _version = 1;
+  static const int _version = 2;
   static const String _dbName = 'illume_pos.db';
 
   // Migration flag key (SharedPreferences)
@@ -49,6 +49,7 @@ class DatabaseHelper {
         discount_amount REAL    NOT NULL DEFAULT 0,
         total           REAL    NOT NULL,
         payment_method  TEXT    NOT NULL,
+        metadata_json   TEXT,
         created_at      TEXT    NOT NULL,
         updated_at      TEXT    NOT NULL,
         sync_status     TEXT    NOT NULL DEFAULT 'pending',
@@ -86,7 +87,9 @@ class DatabaseHelper {
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
-    // Future migrations go here, versioned by oldVersion
+    if (oldVersion < 2) {
+      await db.execute('ALTER TABLE orders ADD COLUMN metadata_json TEXT');
+    }
   }
 
   // ── Order CRUD ────────────────────────────────────────────────────────────

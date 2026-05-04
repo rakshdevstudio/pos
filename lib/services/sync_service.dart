@@ -8,7 +8,8 @@ import '../data/repositories/order_repository_impl.dart';
 
 enum SyncState { idle, syncing, done, offline }
 
-class SyncNotifier extends StateNotifier<SyncState> with WidgetsBindingObserver {
+class SyncNotifier extends StateNotifier<SyncState>
+    with WidgetsBindingObserver {
   final OrderRepositoryImpl _orderRepo;
   final Ref _ref;
 
