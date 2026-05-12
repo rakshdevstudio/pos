@@ -2,6 +2,7 @@ import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../data/remote/api_client.dart';
 import '../../presentation/auth/login_screen.dart';
+import '../../presentation/auth/splash_screen.dart';
 import '../../presentation/schools/school_selection_screen.dart';
 import '../../presentation/pos/pos_screen.dart';
 
@@ -12,7 +13,7 @@ class AppRouter {
     final selectedSchoolId = prefs.getString('selectedSchoolId');
     final hasSchool = selectedSchoolId?.isNotEmpty == true;
 
-    String initialLocation = '/';
+    String initialLocation = '/splash';
     if (token != null && hasSchool) {
       initialLocation = '/pos';
     } else if (token != null) {
@@ -22,6 +23,10 @@ class AppRouter {
     return GoRouter(
       initialLocation: initialLocation,
       routes: [
+        GoRoute(
+          path: '/splash',
+          builder: (_, __) => const SplashScreen(),
+        ),
         GoRoute(
           path: '/',
           builder: (_, __) => const LoginScreen(),

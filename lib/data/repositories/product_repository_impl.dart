@@ -5,14 +5,14 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/config/supabase_config.dart';
 import '../../domain/models/models.dart';
 import '../../domain/repositories/product_repository.dart';
+import 'pos_product_filter.dart';
 
 class ProductRepositoryImpl implements ProductRepository {
   static const Duration _cacheTtl = Duration(seconds: 45);
   static const String _productsUrl =
       '${SupabaseConfig.url}/functions/v1/get-products';
   static const String _restUrl = '${SupabaseConfig.url}/rest/v1';
-  static const String _productSelectFields =
-      'id,name,school_id,class_id,gender,category,image_url,description,is_active,created_at';
+  static const String _productSelectFields = '*';
 
   final Dio _dio;
 
@@ -75,22 +75,73 @@ class ProductRepositoryImpl implements ProductRepository {
       return const [];
     }
 
-    if (scopedClassId != null && scopedClassId.isNotEmpty) {
-      final filteredProducts = await _fetchProductsFromRest(
+    final schoolCacheKey = _cacheKey(schoolId: scopedSchoolId);
+    final cachedSchoolProducts = _productCache[schoolCacheKey];
+    final cachedSchoolProductsAt = _cachedAt[schoolCacheKey];
+    final hasFreshSchoolCache = cachedSchoolProducts != null &&
+        cachedSchoolProductsAt != null &&
+        DateTime.now().difference(cachedSchoolProductsAt) < _cacheTtl;
+
+    final schoolProducts = hasFreshSchoolCache
+        ? cachedSchoolProducts
+        : await _fetchAllSchoolProducts(scopedSchoolId);
+
+    final filterResult = PosProductFilter.apply(
+      products: schoolProducts,
+      schoolId: scopedSchoolId,
+      classId: scopedClassId,
+      gender: normalizedGender,
+    );
+
+    if (_shouldFallbackForClassFilter(
+      requestedClassId: scopedClassId,
+      schoolProducts: schoolProducts,
+      filterResult: filterResult,
+    )) {
+      debugPrint(
+        'POS class metadata fallback triggered for school_id $scopedSchoolId '
+        'class_id=$scopedClassId',
+      );
+      final restProducts =
+          await _fetchProductsFromRest(schoolId: scopedSchoolId);
+      _setCache(schoolId: scopedSchoolId, products: restProducts);
+      final restFilterResult = PosProductFilter.apply(
+        products: restProducts,
         schoolId: scopedSchoolId,
         classId: scopedClassId,
         gender: normalizedGender,
       );
+      _logFilterPipeline(
+        schoolId: scopedSchoolId,
+        classId: scopedClassId,
+        gender: normalizedGender,
+        result: restFilterResult,
+      );
+      final restFilteredProducts = restFilterResult.products;
       _setCache(
         schoolId: scopedSchoolId,
         classId: scopedClassId,
         gender: normalizedGender,
-        products: filteredProducts,
+        products: restFilteredProducts,
       );
-      return filteredProducts;
+      return restFilteredProducts;
     }
 
-    return _fetchAllSchoolProducts(scopedSchoolId);
+    _logFilterPipeline(
+      schoolId: scopedSchoolId,
+      classId: scopedClassId,
+      gender: normalizedGender,
+      result: filterResult,
+    );
+
+    final filteredProducts = filterResult.products;
+    _setCache(
+      schoolId: scopedSchoolId,
+      classId: scopedClassId,
+      gender: normalizedGender,
+      products: filteredProducts,
+    );
+    return filteredProducts;
   }
 
   List<dynamic> _extractProducts(dynamic data) {
@@ -111,7 +162,16 @@ class ProductRepositoryImpl implements ProductRepository {
       );
 
       final products = _parseProducts(response.data, schoolId);
-      if (products.isEmpty) {
+      _logFetchedVariants(
+        source: 'edge_function',
+        schoolId: schoolId,
+        products: products,
+      );
+      if (_shouldFallbackToRest(products)) {
+        debugPrint(
+          'POS edge function fallback triggered for school_id $schoolId: '
+          'products=${products.length}, variants=${_countVariants(products)}',
+        );
         final fallbackProducts = await _fetchProductsFromRest(
           schoolId: schoolId,
         );
@@ -226,30 +286,46 @@ class ProductRepositoryImpl implements ProductRepository {
     return _legacyBarcodeIndex[sku.trim().toUpperCase()];
   }
 
-  List<Product> _parseProducts(dynamic data, String _) {
+  List<Product> _parseProducts(dynamic data, String schoolId) {
     return _extractProducts(data)
-        .map((entry) => Product.fromJson(entry as Map<String, dynamic>))
+        .map(
+          (entry) => _normalizeProductPayload(
+            entry as Map<String, dynamic>,
+            schoolId: schoolId,
+          ),
+        )
+        .map(Product.fromJson)
         .toList();
+  }
+
+  Map<String, dynamic> _normalizeProductPayload(
+    Map<String, dynamic> entry, {
+    required String schoolId,
+  }) {
+    final variants = entry['variants'];
+    final productVariants = entry['product_variants'];
+    final normalizedSchoolId =
+        entry['school_id'] ?? entry['schoolId'] ?? schoolId;
+    return {
+      ...entry,
+      'school_id': normalizedSchoolId,
+      'variants': variants ?? productVariants ?? const <dynamic>[],
+    };
   }
 
   Future<List<Product>> _fetchProductsFromRest({
     required String schoolId,
-    String? classId,
-    String? gender,
   }) async {
-    final variantSchema = await _getVariantSchemaProfile();
     final prefs = await SharedPreferences.getInstance();
     final branchId = prefs.getString('selectedBranchId')?.trim();
     final queryParameters = <String, dynamic>{
-      'select': '$_productSelectFields,${variantSchema.nestedProductSelect}',
+      'select': '$_productSelectFields,product_variants(*)',
       'school_id': 'eq.$schoolId',
       'is_active': 'eq.true',
       'archived': 'eq.false',
       'deleted_at': 'is.null',
       'order': 'name.asc',
-      if (classId != null && classId.isNotEmpty) 'class_id': 'eq.$classId',
     };
-    _applyGenderQuery(queryParameters, gender);
 
     final productsResponse = await _dio.get(
       '$_restUrl/products',
@@ -284,16 +360,8 @@ class ProductRepositoryImpl implements ProductRepository {
 
     final fallbackProducts = productRows
         .map((row) => Product.fromJson({
-              'id': row['id'],
-              'school_id': row['school_id'],
-              'class_id': row['class_id'],
-              'gender': row['gender'],
-              'name': row['name'],
-              'description': row['description'],
-              'image_url': row['image_url'],
-              'category': row['category'],
+              ...row,
               'is_active': _boolToFlag(row['is_active']),
-              'updated_at': row['created_at'],
               'variants': ((row['product_variants'] as List<dynamic>? ??
                       const <dynamic>[])
                   .cast<Map<String, dynamic>>()
@@ -301,17 +369,18 @@ class ProductRepositoryImpl implements ProductRepository {
                 final variantId = variantRow['id']?.toString() ?? '';
                 final priceValue = variantRow['price_override'] ??
                     variantRow['base_price'] ??
+                    variantRow['price'] ??
                     0;
                 final stockValue = inventoryByVariantId[variantId] ??
-                    _asInt(variantRow['stock']);
+                    _asInt(variantRow['stock'] ?? variantRow['stock_quantity']);
                 return {
-                  'id': variantId,
-                  'product_id': variantRow['product_id'],
-                  'size': variantRow['size'],
-                  'name': variantRow['size'],
-                  'sku': variantRow['sku'],
-                  'barcode': variantRow['barcode'],
-                  'barcode_value': variantRow['barcode_value'],
+                  ...variantRow,
+                  'size': variantRow['size'] ?? variantRow['name'],
+                  'name': variantRow['name'] ?? variantRow['size'],
+                  'barcode':
+                      variantRow['barcode'] ?? variantRow['barcode_value'],
+                  'barcode_value':
+                      variantRow['barcode_value'] ?? variantRow['barcode'],
                   'price': priceValue,
                   'stock': stockValue,
                   'is_active': _boolToFlag(variantRow['is_active']),
@@ -319,6 +388,11 @@ class ProductRepositoryImpl implements ProductRepository {
               }).toList()),
             }))
         .toList();
+    _logFetchedVariants(
+      source: 'rest_fallback',
+      schoolId: schoolId,
+      products: fallbackProducts,
+    );
     return fallbackProducts;
   }
 
@@ -387,23 +461,15 @@ class ProductRepositoryImpl implements ProductRepository {
     final product = Product.fromJson({
       'id': productRow['id'],
       'school_id': productRow['school_id'],
-      'class_id': productRow['class_id'],
-      'gender': productRow['gender'],
-      'name': productRow['name'],
-      'description': productRow['description'],
-      'image_url': productRow['image_url'],
-      'category': productRow['category'],
+      ...productRow,
       'is_active': _boolToFlag(productRow['is_active']),
-      'updated_at': productRow['created_at'],
       'variants': [
         {
-          'id': row['id'],
-          'product_id': row['product_id'],
-          'size': row['size'],
-          'name': row['size'],
-          'sku': row['sku'],
-          'barcode': row['barcode'],
-          'barcode_value': row['barcode_value'],
+          ...row,
+          'size': row['size'] ?? row['name'],
+          'name': row['name'] ?? row['size'],
+          'barcode': row['barcode'] ?? row['barcode_value'],
+          'barcode_value': row['barcode_value'] ?? row['barcode'],
           'price': row['price_override'] ?? row['base_price'] ?? 0,
           'stock': stockValue,
           'is_active': _boolToFlag(row['is_active']),
@@ -490,23 +556,95 @@ class ProductRepositoryImpl implements ProductRepository {
     }
   }
 
-  void _applyGenderQuery(
-    Map<String, dynamic> queryParameters,
-    String? gender,
-  ) {
-    final normalizedGender = _normalizeGenderFilter(gender);
-    if (normalizedGender == null) return;
+  void _logFetchedVariants({
+    required String source,
+    required String schoolId,
+    required List<Product> products,
+  }) {
+    for (final product in products) {
+      final classIds = product.classIds.isNotEmpty
+          ? product.classIds
+          : [
+              if (product.classId != null && product.classId!.trim().isNotEmpty)
+                product.classId!,
+            ];
 
-    switch (normalizedGender) {
-      case 'Male':
-        queryParameters['gender'] = 'in.(Male,Boys)';
-        return;
-      case 'Female':
-        queryParameters['gender'] = 'in.(Female,Girls)';
-        return;
-      default:
-        queryParameters['gender'] = 'eq.$normalizedGender';
+      if (product.variants.isEmpty) {
+        debugPrint(
+          'POS fetched [$source] school=$schoolId product=${product.id} variant=<none> class_ids=$classIds school_id=${product.schoolId} gender=${product.gender ?? 'null'} stock=0 status=${product.status ?? product.isActive}',
+        );
+        continue;
+      }
+
+      for (final variant in product.variants) {
+        final variantClassIds =
+            variant.classIds.isNotEmpty ? variant.classIds : classIds;
+        debugPrint(
+          'POS fetched [$source] product=${product.id} variant=${variant.id} class_ids=$variantClassIds school_id=${product.schoolId} gender=${product.gender ?? 'null'} stock=${variant.stock} status=${variant.status ?? variant.isActive}',
+        );
+      }
     }
+  }
+
+  void _logFilterPipeline({
+    required String schoolId,
+    String? classId,
+    String? gender,
+    required PosProductFilterResult result,
+  }) {
+    debugPrint(
+      'POS filter counts school=$schoolId class=${classId ?? 'ALL'} gender=${gender ?? 'ALL'} fetched_variants=${result.fetchedVariantCount} after_school=${result.afterSchoolFilterCount} after_status=${result.afterStatusFilterCount} after_class=${result.afterClassFilterCount} after_gender=${result.afterGenderFilterCount} after_stock=${result.afterStockFilterCount} final_visible=${result.finalVisibleCount}',
+    );
+  }
+
+  bool _shouldFallbackToRest(List<Product> products) {
+    if (products.isEmpty) {
+      return true;
+    }
+
+    return _countVariants(products) == 0;
+  }
+
+  bool _shouldFallbackForClassFilter({
+    required String? requestedClassId,
+    required List<Product> schoolProducts,
+    required PosProductFilterResult filterResult,
+  }) {
+    if (requestedClassId == null || requestedClassId.isEmpty) {
+      return false;
+    }
+
+    if (schoolProducts.isEmpty || _countVariants(schoolProducts) == 0) {
+      return false;
+    }
+
+    if (filterResult.products.isNotEmpty) {
+      return false;
+    }
+
+    return !_hasAnyClassMetadata(schoolProducts);
+  }
+
+  int _countVariants(List<Product> products) {
+    return products.fold<int>(
+      0,
+      (sum, product) => sum + product.variants.length,
+    );
+  }
+
+  bool _hasAnyClassMetadata(List<Product> products) {
+    for (final product in products) {
+      if ((product.classId?.trim().isNotEmpty ?? false) ||
+          product.classIds.isNotEmpty) {
+        return true;
+      }
+      for (final variant in product.variants) {
+        if (variant.classIds.isNotEmpty) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   String _cacheKey({

@@ -18,6 +18,7 @@ import '../../services/cart_service.dart';
 import '../checkout/checkout_sheet.dart';
 import '../checkout/customer_details_sheet.dart';
 import '../shared/widgets/sync_status_badge.dart';
+import '../shared/widgets/illume_logo.dart';
 import 'cart_panel.dart';
 import 'product_card.dart';
 
@@ -38,8 +39,8 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   ];
 
   final _searchController = TextEditingController();
-  final _barcodeController = TextEditingController();
   final _searchFocus = FocusNode();
+  final _barcodeController = TextEditingController();
   final _barcodeFocus = FocusNode();
   final _mobileScrollController = ScrollController();
   final Queue<String> _pendingBarcodeScans = Queue<String>();
@@ -61,9 +62,9 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   int _productRequestId = 0;
   bool _isProcessingBarcode = false;
   bool _isScannerFocused = false;
+  bool _isScannerActive = true;
   bool _isLoadingDrafts = false;
   bool _isOpeningCameraScanner = false;
-  bool _isConsumingBufferedScannerInput = false;
   List<HeldBillDraft> _draftBills = const [];
 
   @override
@@ -73,59 +74,46 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     _searchFocus.addListener(_handleSearchFocusChanged);
     unawaited(_loadDraftBills());
     _loadSchoolContext();
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _focusBarcodeField(force: true);
-    });
   }
 
   void _handleBarcodeFocusChanged() {
-    if (!mounted || _isScannerFocused == _barcodeFocus.hasFocus) {
+    if (!mounted) {
       return;
     }
 
-    setState(() {
-      _isScannerFocused = _barcodeFocus.hasFocus;
-    });
+    final hasFocus = _barcodeFocus.hasFocus;
+    if (_isScannerFocused == hasFocus) {
+      return;
+    }
 
-    if (!_barcodeFocus.hasFocus) {
-      _scheduleScannerFocusRestore();
+    if (hasFocus) {
+      setState(() {
+        _isScannerActive = true;
+        _isScannerFocused = true;
+      });
+      unawaited(SystemChannels.textInput.invokeMethod('TextInput.hide'));
+    } else {
+      setState(() {
+        _isScannerFocused = false;
+      });
     }
   }
 
   void _handleSearchFocusChanged() {
-    if (!_searchFocus.hasFocus) {
-      _focusBarcodeField(force: true);
-    }
-    if (mounted) {
-      setState(() {});
-    }
-  }
-
-  void _handleBufferedScannerInput() {
-    if (_isConsumingBufferedScannerInput) {
+    if (!mounted) {
       return;
     }
 
-    final raw = _barcodeController.text;
-    if (!raw.contains('\n') && !raw.contains('\r')) {
-      return;
-    }
-
-    _isConsumingBufferedScannerInput = true;
-    try {
-      final normalizedLines = raw
-          .split(RegExp(r'[\r\n]+'))
-          .map((value) => value.trim())
-          .where((value) => value.isNotEmpty)
-          .toList();
-
-      _barcodeController.clear();
-      for (final code in normalizedLines) {
-        _handleBarcodeSubmit(code);
-      }
-    } finally {
-      _isConsumingBufferedScannerInput = false;
+    if (_searchFocus.hasFocus) {
+      setState(() {
+        _isScannerActive = false;
+      });
+      _barcodeFocus.unfocus();
+    } else {
+      setState(() {
+        _isScannerActive = true;
+      });
+      _focusBarcodeField();
     }
   }
 
@@ -212,6 +200,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
         _isLoadingClasses = false;
         _classesError = null;
       });
+      await _loadProducts();
     } catch (error) {
       if (!mounted || requestId != _classRequestId) return;
       setState(() {
@@ -227,8 +216,11 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     return selectedSchoolId?.isNotEmpty == true ? selectedSchoolId : null;
   }
 
-  Future<void> _handleClassSelected(SchoolClass schoolClass) async {
-    if (_selectedClass?.id == schoolClass.id) return;
+  Future<void> _handleClassSelected(SchoolClass? schoolClass) async {
+    if (_selectedClass?.id == schoolClass?.id &&
+        (_selectedClass != null || schoolClass == null)) {
+      return;
+    }
 
     setState(() {
       _selectedClass = schoolClass;
@@ -258,8 +250,8 @@ class _PosScreenState extends ConsumerState<PosScreen> {
 
   Future<void> _loadProducts() async {
     final schoolId = _schoolId;
-    final selectedClass = _selectedClass;
-    if (schoolId == null || selectedClass == null) {
+    final selectedClassId = _selectedClass?.id;
+    if (schoolId == null) {
       if (!mounted) return;
       setState(() {
         _products = const [];
@@ -278,7 +270,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     try {
       final products = await ref.read(productRepoProvider).fetchProducts(
             schoolId: schoolId,
-            classId: selectedClass.id,
+            classId: selectedClassId,
             gender: _selectedGender,
           );
       if (!mounted || requestId != _productRequestId) return;
@@ -297,6 +289,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
           _selectedCategory = null;
         }
       });
+      _logVisibleProductCounts(trigger: 'load');
     } catch (error) {
       if (!mounted || requestId != _productRequestId) return;
       setState(() {
@@ -309,11 +302,27 @@ class _PosScreenState extends ConsumerState<PosScreen> {
 
   Future<void> _refreshProducts() async {
     if (_schoolId == null) return;
-    if (_selectedClass == null) {
-      await _loadClasses(_schoolId!);
-      return;
-    }
     await _loadProducts();
+  }
+
+  void _pauseScannerFocus() {
+    if (_barcodeFocus.hasFocus) {
+      _barcodeFocus.unfocus();
+    }
+    if (mounted) {
+      setState(() {
+        _isScannerFocused = false;
+      });
+    }
+  }
+
+  void _resumeScannerFocus() {
+    if (_shouldMaintainScannerFocus && mounted) {
+      setState(() {
+        _isScannerActive = true;
+      });
+      _focusBarcodeField(force: true);
+    }
   }
 
   Future<void> _startCheckout() async {
@@ -325,6 +334,8 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       return;
     }
 
+    _pauseScannerFocus();
+
     final customer = await showModalBottomSheet<CustomerInfo>(
       context: context,
       isScrollControlled: true,
@@ -333,14 +344,17 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     );
 
     if (customer != null && mounted) {
-      showModalBottomSheet(
+      await showModalBottomSheet(
         context: context,
         isScrollControlled: true,
         backgroundColor: Colors.transparent,
         builder: (_) => CheckoutSheet(customer: customer),
-      ).whenComplete(_requestScannerRefocus);
+      );
+      _resumeScannerFocus();
+      return;
     }
-    _requestScannerRefocus();
+
+    _resumeScannerFocus();
   }
 
   void _focusSearchField() {
@@ -357,27 +371,10 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     if (mounted) {
       setState(() {
         _searchQuery = '';
+        _isScannerActive = true;
       });
     }
     _focusBarcodeField();
-  }
-
-  void _requestScannerRefocus() {
-    ref.read(scannerRefocusRequestProvider.notifier).state++;
-  }
-
-  bool get _isPosRouteActive => ModalRoute.of(context)?.isCurrent ?? true;
-
-  void _scheduleScannerFocusRestore() {
-    Future<void>.delayed(PosConstants.scannerRefocusDelay, () {
-      if (!mounted || !_isPosRouteActive) {
-        return;
-      }
-      if (_searchFocus.hasFocus) {
-        return;
-      }
-      _focusBarcodeField(force: true);
-    });
   }
 
   Future<void> _holdCurrentBill() async {
@@ -455,7 +452,6 @@ class _PosScreenState extends ConsumerState<PosScreen> {
           ],
         ),
       );
-      _requestScannerRefocus();
       if (shouldReplace != true) {
         return;
       }
@@ -500,6 +496,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   }
 
   void _openDraftsSheet() {
+    _pauseScannerFocus();
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -509,14 +506,18 @@ class _PosScreenState extends ConsumerState<PosScreen> {
         isLoading: _isLoadingDrafts,
         onResume: (draft) {
           Navigator.pop(context);
+          _resumeScannerFocus();
           unawaited(_resumeDraft(draft));
         },
         onDelete: (draft) {
           Navigator.pop(context);
+          _resumeScannerFocus();
           unawaited(_deleteDraft(draft));
         },
       ),
-    ).whenComplete(_requestScannerRefocus);
+    ).then((_) {
+      _resumeScannerFocus();
+    });
   }
 
   SchoolClass? _findClassById(String? classId) {
@@ -550,12 +551,18 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     setState(() {
       _isOpeningCameraScanner = true;
     });
+
+    _pauseScannerFocus();
+
     final barcode = await showModalBottomSheet<String>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (_) => const _CameraScannerSheet(),
     );
+
+    _resumeScannerFocus();
+
     if (!mounted) {
       return;
     }
@@ -565,9 +572,8 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     if (barcode != null) {
       _handleBarcodeSubmit(barcode);
     } else {
-      _focusBarcodeField(force: true);
+      _focusBarcodeField();
     }
-    _requestScannerRefocus();
   }
 
   void _handleBarcodeSubmit(String rawCode) {
@@ -813,7 +819,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
 
   void _restoreBarcodeForRescan(String barcode) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_isPosRouteActive) return;
+      if (!mounted) return;
 
       if (_shouldMaintainScannerFocus || _barcodeFocus.hasFocus) {
         _barcodeFocus.requestFocus();
@@ -835,13 +841,15 @@ class _PosScreenState extends ConsumerState<PosScreen> {
 
   void _focusBarcodeField({bool selectAll = false, bool force = false}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_isPosRouteActive) {
+      if (!mounted) {
         return;
       }
 
       if (!force && !_shouldMaintainScannerFocus && !_barcodeFocus.hasFocus) {
         return;
       }
+
+      unawaited(SystemChannels.textInput.invokeMethod('TextInput.hide'));
 
       _barcodeFocus.requestFocus();
       final text = _barcodeController.text;
@@ -863,9 +871,12 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       .toSet()
       .toList();
 
-  List<Product> get _visibleProducts {
+  List<Product> _computeVisibleProducts({
+    bool applySearch = true,
+    bool applyCategory = true,
+  }) {
     var filtered = _products;
-    if (_searchQuery.isNotEmpty) {
+    if (applySearch && _searchQuery.isNotEmpty) {
       final normalizedQuery = _searchQuery.toLowerCase();
       filtered = filtered
           .where((product) => product.name.toLowerCase().contains(
@@ -873,12 +884,22 @@ class _PosScreenState extends ConsumerState<PosScreen> {
               ))
           .toList();
     }
-    if (_selectedCategory != null) {
+    if (applyCategory && _selectedCategory != null) {
       filtered = filtered
           .where((product) => product.category == _selectedCategory)
           .toList();
     }
     return filtered;
+  }
+
+  List<Product> get _visibleProducts => _computeVisibleProducts();
+
+  void _logVisibleProductCounts({required String trigger}) {
+    final afterSearch = _computeVisibleProducts(applyCategory: false);
+    final afterCategory = _computeVisibleProducts();
+    debugPrint(
+      'POS visible counts [$trigger] loaded=${_products.length} after_search=${afterSearch.length} after_category=${afterCategory.length} final_visible=${afterCategory.length} selected_category=${_selectedCategory ?? 'All'} search="${_searchQuery.trim()}"',
+    );
   }
 
   @override
@@ -895,11 +916,11 @@ class _PosScreenState extends ConsumerState<PosScreen> {
 
   @override
   Widget build(BuildContext context) {
-    ref.listen<int>(scannerRefocusRequestProvider, (_, __) {
-      if (_isPosRouteActive) {
-        _focusBarcodeField(force: true);
-      }
-    });
+    if (_isScannerActive) {
+      Future.microtask(() {
+        SystemChannels.textInput.invokeMethod('TextInput.hide');
+      });
+    }
 
     return CallbackShortcuts(
       bindings: {
@@ -913,7 +934,6 @@ class _PosScreenState extends ConsumerState<PosScreen> {
         const SingleActivator(LogicalKeyboardKey.escape): _clearSearch,
       },
       child: Focus(
-        autofocus: true,
         child: Scaffold(
           backgroundColor: AppColors.background,
           resizeToAvoidBottomInset: false,
@@ -943,7 +963,11 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   bool _isCompactLayout(BuildContext context) =>
       MediaQuery.of(context).size.width < 900;
 
-  bool get _shouldMaintainScannerFocus => !_searchFocus.hasFocus;
+  bool get _shouldMaintainScannerFocus {
+    final mediaQuery = MediaQuery.maybeOf(context);
+    return mediaQuery == null ||
+        (mediaQuery.size.width >= 700 && !_searchFocus.hasFocus);
+  }
 
   Widget _buildDesktopLayout() {
     final productsPanel = Column(
@@ -1012,76 +1036,170 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   Widget _buildTopBar() {
     final cart = ref.watch(cartProvider);
     final isCompact = _isCompactLayout(context);
+
     if (isCompact) {
-      return Padding(
-        padding: const EdgeInsets.fromLTRB(
-          AppDimens.spacingLG,
-          AppDimens.spacingLG,
-          AppDimens.spacingLG,
-          AppDimens.spacingMD,
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+      return Container(
+        height: AppDimens.appBarHeight,
+        padding: const EdgeInsets.symmetric(horizontal: AppDimens.spacingMD),
+        child: Row(
           children: [
-            Row(
-              children: [
-                Expanded(
+            const SizedBox(
+              width: 40,
+              height: 40,
+              child: LogoIcon(size: 34),
+            ),
+            const SizedBox(width: AppDimens.spacingSM),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    _schoolName ?? 'Store',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppTypography.titleMedium.copyWith(
+                      color: AppColors.textPrimary,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  Text(
+                    'Point of Sale',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppTypography.bodySmall.copyWith(
+                      color: AppColors.textMuted,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: AppDimens.spacingSM),
+            const SyncStatusBadge(),
+            const SizedBox(width: AppDimens.spacingSM),
+            PopupMenuButton<String>(
+              color: AppColors.surface,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(AppDimens.radiusMD),
+                side: const BorderSide(color: AppColors.border),
+              ),
+              offset: const Offset(0, 8),
+              onSelected: (value) async {
+                if (value == 'drafts') {
+                  _openDraftsSheet();
+                } else if (value == 'hold') {
+                  if (cart.items.isNotEmpty) {
+                    unawaited(_holdCurrentBill());
+                  }
+                } else if (value == 'switch_school') {
+                  if (context.mounted) {
+                    context.go('/schools');
+                  }
+                } else if (value == 'logout') {
+                  await ApiClient.clearToken();
+                  if (context.mounted) {
+                    context.go('/');
+                  }
+                }
+              },
+              itemBuilder: (_) => [
+                PopupMenuItem(
+                  value: 'drafts',
                   child: Row(
                     children: [
-                      Flexible(
-                        child: Text(
-                          _schoolName ?? 'Store',
-                          style: AppTypography.titleLarge.copyWith(
-                            color: AppColors.textPrimary,
-                          ),
-                          overflow: TextOverflow.ellipsis,
-                        ),
+                      const Icon(
+                        Icons.receipt_long_rounded,
+                        size: 16,
+                        color: AppColors.textSecondary,
                       ),
-                      const SizedBox(width: AppDimens.spacingXS),
+                      const SizedBox(width: AppDimens.spacingSM),
                       Text(
-                        '· POS',
-                        style: AppTypography.headlineSmall.copyWith(
-                          color: AppColors.textMuted,
-                          fontWeight: FontWeight.w300,
+                        _isLoadingDrafts
+                            ? 'Loading drafts...'
+                            : 'Drafts ${_draftBills.length}',
+                        style: AppTypography.bodyMedium.copyWith(
+                          color: AppColors.textPrimary,
                         ),
                       ),
                     ],
                   ),
                 ),
-                const SizedBox(width: AppDimens.spacingSM),
-                const SyncStatusBadge.compact(),
-                const SizedBox(width: AppDimens.spacingSM),
-                _ProfileMenu(),
+                PopupMenuItem(
+                  value: 'hold',
+                  enabled: cart.items.isNotEmpty,
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.pause_circle_outline_rounded,
+                        size: 16,
+                        color: cart.items.isNotEmpty
+                            ? AppColors.textSecondary
+                            : AppColors.textMuted,
+                      ),
+                      const SizedBox(width: AppDimens.spacingSM),
+                      Text(
+                        'Hold Bill',
+                        style: AppTypography.bodyMedium.copyWith(
+                          color: cart.items.isNotEmpty
+                              ? AppColors.textPrimary
+                              : AppColors.textMuted,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const PopupMenuDivider(),
+                PopupMenuItem(
+                  value: 'switch_school',
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.swap_horiz_rounded,
+                        size: 16,
+                        color: AppColors.textSecondary,
+                      ),
+                      const SizedBox(width: AppDimens.spacingSM),
+                      Text(
+                        'Switch School',
+                        style: AppTypography.bodyMedium.copyWith(
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                PopupMenuItem(
+                  value: 'logout',
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.logout_rounded,
+                        size: 16,
+                        color: AppColors.error,
+                      ),
+                      const SizedBox(width: AppDimens.spacingSM),
+                      Text(
+                        'Sign Out',
+                        style: AppTypography.bodyMedium.copyWith(
+                          color: AppColors.error,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ],
-            ),
-            const SizedBox(height: AppDimens.spacingMD),
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: [
-                  _TopBarAction(
-                    icon: Icons.receipt_long_rounded,
-                    label: '${_draftBills.length}',
-                    onTap: _openDraftsSheet,
-                  ),
-                  const SizedBox(width: AppDimens.spacingSM),
-                  _TopBarAction(
-                    icon: Icons.pause_circle_outline_rounded,
-                    label: 'Hold',
-                    onTap: cart.items.isEmpty
-                        ? null
-                        : () => unawaited(_holdCurrentBill()),
-                  ),
-                  const SizedBox(width: AppDimens.spacingSM),
-                  _ScannerStatusBadge(
-                    isReady: _isScannerFocused,
-                    compact: true,
-                  ),
-                  const SizedBox(width: AppDimens.spacingSM),
-                  _ScannerToolsMenu(
-                    onOpenCameraFallback: _openCameraScanner,
-                  ),
-                ],
+              child: Container(
+                padding: const EdgeInsets.all(AppDimens.spacingSM),
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.circular(AppDimens.radiusSM),
+                  border: Border.all(color: AppColors.border),
+                ),
+                child: const Icon(
+                  Icons.more_horiz_rounded,
+                  size: 18,
+                  color: AppColors.textSecondary,
+                ),
               ),
             ),
           ],
@@ -1093,9 +1211,18 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       height: AppDimens.appBarHeight,
       padding: const EdgeInsets.symmetric(horizontal: AppDimens.spacingXXL),
       child: Row(
+        mainAxisSize: MainAxisSize.max,
+        mainAxisAlignment: MainAxisAlignment.start,
         children: [
+          const SizedBox(
+            width: 40,
+            height: 40,
+            child: LogoIcon(size: 36),
+          ),
+          const SizedBox(width: AppDimens.spacingMD),
           Expanded(
             child: Row(
+              mainAxisSize: MainAxisSize.min,
               children: [
                 Flexible(
                   child: Text(
@@ -1104,6 +1231,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
                       color: AppColors.textPrimary,
                     ),
                     overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
                   ),
                 ),
                 const SizedBox(width: AppDimens.spacingXS),
@@ -1134,15 +1262,6 @@ class _PosScreenState extends ConsumerState<PosScreen> {
             onTap:
                 cart.items.isEmpty ? null : () => unawaited(_holdCurrentBill()),
           ),
-          const SizedBox(width: AppDimens.spacingSM),
-          _ScannerStatusBadge(
-            isReady: _isScannerFocused,
-            compact: isCompact,
-          ),
-          const SizedBox(width: AppDimens.spacingSM),
-          _ScannerToolsMenu(
-            onOpenCameraFallback: _openCameraScanner,
-          ),
           const SizedBox(width: AppDimens.spacingMD),
           const SyncStatusBadge(),
           const SizedBox(width: AppDimens.spacingMD),
@@ -1157,29 +1276,31 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     final searchField = _SearchField(
       controller: _searchController,
       focusNode: _searchFocus,
-      enabled: _selectedClass != null,
-      onDone: () => _focusBarcodeField(force: true),
+      enabled: _schoolId != null && !_isLoadingClasses,
       onChanged: (value) {
         setState(() {
           _searchQuery = value;
         });
+        _logVisibleProductCounts(trigger: 'search');
       },
     );
     final scannerField = _BarcodeScannerField(
       controller: _barcodeController,
       focusNode: _barcodeFocus,
       isFocused: _isScannerFocused,
+      isActive: _isScannerActive,
       isProcessing: _isProcessingBarcode,
-      isOpeningCamera: _isOpeningCameraScanner,
       statusText: _scannerStatusText,
       helperText: _scannerHelperText,
       statusColor: _scannerStatusColor,
-      onChanged: (_) => _handleBufferedScannerInput(),
       onSubmitted: _handleBarcodeSubmit,
+      onOpenCamera: _openCameraScanner,
+      isOpeningCamera: _isOpeningCameraScanner,
+      canOpenCamera: !_shouldMaintainScannerFocus || _isCompactLayout(context),
       onTapFocus: () => _focusBarcodeField(force: true),
       onClear: () {
         _barcodeController.clear();
-        _focusBarcodeField(force: true);
+        _focusBarcodeField();
       },
     );
 
@@ -1222,17 +1343,23 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     if (_searchFocus.hasFocus) {
       return 'F1 search active • Esc clears';
     }
-    return 'Hardware scanner focused • Enter completes scan';
+    if (!_shouldMaintainScannerFocus) {
+      return 'Use camera or tap to refocus';
+    }
+    return 'USB / Bluetooth scanner ready';
   }
 
   String get _scannerStatusText {
     if (_isScannerFocused) {
-      return 'Scanner Connected / Ready';
+      return 'Scanner Ready';
     }
     if (_searchFocus.hasFocus) {
       return 'Search Active';
     }
-    return 'Restoring Scanner Focus';
+    if (!_shouldMaintainScannerFocus) {
+      return 'Camera Scanner';
+    }
+    return 'Scanner Paused';
   }
 
   Color get _scannerStatusColor {
@@ -1313,7 +1440,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
           _ContextChip(
             label: 'Class',
             value: _selectedClass == null
-                ? 'Select'
+                ? 'All'
                 : _formatLabel(_selectedClass!.name),
             icon: Icons.grid_view_rounded,
           ),
@@ -1386,15 +1513,20 @@ class _PosScreenState extends ConsumerState<PosScreen> {
         Wrap(
           spacing: AppDimens.spacingSM,
           runSpacing: AppDimens.spacingSM,
-          children: _classes
-              .map(
-                (schoolClass) => _SelectionChip(
-                  label: _formatLabel(schoolClass.name),
-                  isSelected: _selectedClass?.id == schoolClass.id,
-                  onTap: () => _handleClassSelected(schoolClass),
-                ),
-              )
-              .toList(),
+          children: [
+            _SelectionChip(
+              label: 'All',
+              isSelected: _selectedClass == null,
+              onTap: () => _handleClassSelected(null),
+            ),
+            ..._classes.map(
+              (schoolClass) => _SelectionChip(
+                label: _formatLabel(schoolClass.name),
+                isSelected: _selectedClass?.id == schoolClass.id,
+                onTap: () => _handleClassSelected(schoolClass),
+              ),
+            ),
+          ],
         ),
       ],
     );
@@ -1427,7 +1559,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   }
 
   Widget _buildCategoryFilter() {
-    if (_selectedClass == null || _categories.isEmpty) {
+    if (_categories.isEmpty) {
       return const SizedBox(height: AppDimens.spacingSM);
     }
 
@@ -1447,6 +1579,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
               setState(() {
                 _selectedCategory = null;
               });
+              _logVisibleProductCounts(trigger: 'category');
             },
           ),
           ..._categories.map(
@@ -1457,6 +1590,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
                 setState(() {
                   _selectedCategory = category;
                 });
+                _logVisibleProductCounts(trigger: 'category');
               },
             ),
           ),
@@ -1466,13 +1600,6 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   }
 
   Widget _buildProductGrid() {
-    if (_selectedClass == null) {
-      return _buildEmptyState(
-        icon: Icons.grid_view_rounded,
-        message: 'Select class to view products',
-      );
-    }
-
     if (_isLoadingProducts) {
       return Center(
         child: Column(
@@ -1559,12 +1686,15 @@ class _PosScreenState extends ConsumerState<PosScreen> {
               final variant = product.variants.first;
               _handleDirectAdd(product, variant);
             } else {
+              _pauseScannerFocus();
               showModalBottomSheet(
                 context: context,
                 isScrollControlled: true,
                 backgroundColor: Colors.transparent,
                 builder: (_) => VariantSheet(product: product),
-              ).whenComplete(_requestScannerRefocus);
+              ).then((_) {
+                _resumeScannerFocus();
+              });
             }
           },
         );
@@ -1573,15 +1703,6 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   }
 
   Widget _buildProductSliverGrid() {
-    if (_selectedClass == null) {
-      return SliverToBoxAdapter(
-        child: _buildEmptyState(
-          icon: Icons.grid_view_rounded,
-          message: 'Select class to view products',
-        ),
-      );
-    }
-
     if (_isLoadingProducts) {
       return const SliverToBoxAdapter(
         child: Padding(
@@ -1643,12 +1764,15 @@ class _PosScreenState extends ConsumerState<PosScreen> {
                 final variant = product.variants.first;
                 _handleDirectAdd(product, variant);
               } else {
+                _pauseScannerFocus();
                 showModalBottomSheet(
                   context: context,
                   isScrollControlled: true,
                   backgroundColor: Colors.transparent,
                   builder: (_) => VariantSheet(product: product),
-                ).whenComplete(_requestScannerRefocus);
+                ).then((_) {
+                  _resumeScannerFocus();
+                });
               }
             },
             key: ValueKey(product.id),
@@ -1731,13 +1855,15 @@ class _BarcodeScannerField extends StatelessWidget {
   final TextEditingController controller;
   final FocusNode focusNode;
   final bool isFocused;
+  final bool isActive;
   final bool isProcessing;
   final bool isOpeningCamera;
+  final bool canOpenCamera;
   final String statusText;
   final String helperText;
   final Color statusColor;
-  final ValueChanged<String> onChanged;
   final ValueChanged<String> onSubmitted;
+  final VoidCallback onOpenCamera;
   final VoidCallback onTapFocus;
   final VoidCallback onClear;
 
@@ -1745,198 +1871,219 @@ class _BarcodeScannerField extends StatelessWidget {
     required this.controller,
     required this.focusNode,
     required this.isFocused,
+    required this.isActive,
     required this.isProcessing,
     required this.isOpeningCamera,
+    required this.canOpenCamera,
     required this.statusText,
     required this.helperText,
     required this.statusColor,
-    required this.onChanged,
     required this.onSubmitted,
+    required this.onOpenCamera,
     required this.onTapFocus,
     required this.onClear,
   });
 
   @override
   Widget build(BuildContext context) {
-    final isCompact = MediaQuery.of(context).size.width < 600;
     return ValueListenableBuilder<TextEditingValue>(
       valueListenable: controller,
       builder: (context, value, _) {
-        return AnimatedContainer(
-          duration: const Duration(milliseconds: AppDimens.animMedium),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(AppDimens.radiusLG),
-            boxShadow: [
-              if (isFocused)
-                const BoxShadow(
-                  color: AppColors.accentGlow,
-                  blurRadius: 18,
-                  spreadRadius: 1,
-                ),
-            ],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Opacity(
-                opacity: 0.01,
-                child: SizedBox(
-                  height: 1,
-                  child: TextField(
-                    controller: controller,
-                    focusNode: focusNode,
-                    keyboardType: TextInputType.none,
-                    showCursor: false,
-                    enableInteractiveSelection: false,
-                    autocorrect: false,
-                    enableSuggestions: false,
-                    smartDashesType: SmartDashesType.disabled,
-                    smartQuotesType: SmartQuotesType.disabled,
-                    textInputAction: TextInputAction.done,
-                    onChanged: onChanged,
-                    onSubmitted: onSubmitted,
-                    decoration: const InputDecoration(
-                      isDense: true,
-                      border: InputBorder.none,
-                      contentPadding: EdgeInsets.zero,
-                    ),
+        return KeyboardListener(
+          focusNode: focusNode,
+          onKeyEvent: (event) {
+            if (event is KeyDownEvent) {
+              final key = event.logicalKey.keyLabel;
+              if (key == 'Enter') {
+                if (controller.text.isNotEmpty) {
+                  onSubmitted(controller.text);
+                  controller.clear();
+                }
+              } else if (key.length == 1) {
+                controller.text += key;
+              }
+            }
+          },
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: AppDimens.animMedium),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(AppDimens.radiusLG),
+              boxShadow: [
+                if (isFocused)
+                  const BoxShadow(
+                    color: AppColors.accentGlow,
+                    blurRadius: 18,
+                    spreadRadius: 1,
                   ),
-                ),
-              ),
-              GestureDetector(
-                onTap: onTapFocus,
-                child: Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(AppDimens.spacingLG),
-                  decoration: BoxDecoration(
-                    color: isFocused
-                        ? AppColors.surfaceHighlight
-                        : AppColors.surface,
-                    borderRadius: BorderRadius.circular(AppDimens.radiusMD),
-                    border: Border.all(
-                      color: isFocused ? AppColors.accentDim : AppColors.border,
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SizedBox.shrink(),
+                GestureDetector(
+                  onTap: onTapFocus,
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(AppDimens.spacingLG),
+                    decoration: BoxDecoration(
+                      color: isFocused
+                          ? AppColors.surfaceHighlight
+                          : AppColors.surface,
+                      borderRadius: BorderRadius.circular(AppDimens.radiusMD),
+                      border: Border.all(
+                        color:
+                            isFocused ? AppColors.accentDim : AppColors.border,
+                      ),
                     ),
-                  ),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 42,
-                        height: 42,
-                        decoration: BoxDecoration(
-                          color: AppColors.accentGlow,
-                          borderRadius:
-                              BorderRadius.circular(AppDimens.radiusMD),
-                        ),
-                        child: const Icon(
-                          Icons.qr_code_scanner_rounded,
-                          size: 22,
-                          color: AppColors.accent,
-                        ),
-                      ),
-                      const SizedBox(width: AppDimens.spacingMD),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              statusText,
-                              style: AppTypography.titleMedium.copyWith(
-                                color: statusColor,
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
-                            const SizedBox(height: AppDimens.spacingXXS),
-                            Text(
-                              helperText,
-                              style: AppTypography.bodySmall.copyWith(
-                                color: AppColors.textMuted,
-                              ),
-                            ),
-                            if (value.text.isNotEmpty) ...[
-                              const SizedBox(height: AppDimens.spacingXS),
-                              Text(
-                                value.text,
-                                style: AppTypography.labelMedium.copyWith(
-                                  color: AppColors.textSecondary,
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                      ),
-                      if (isProcessing || isOpeningCamera)
-                        const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 42,
+                          height: 42,
+                          decoration: BoxDecoration(
+                            color: AppColors.accentGlow,
+                            borderRadius:
+                                BorderRadius.circular(AppDimens.radiusMD),
+                          ),
+                          child: const Icon(
+                            Icons.qr_code_scanner_rounded,
+                            size: 22,
                             color: AppColors.accent,
                           ),
-                        )
-                      else ...[
-                        if (value.text.isNotEmpty)
-                          IconButton(
-                            icon: const Icon(
-                              Icons.close_rounded,
-                              size: 18,
-                              color: AppColors.textMuted,
-                            ),
-                            onPressed: onClear,
-                          ),
-                      ],
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: AppDimens.spacingSM),
-              Wrap(
-                spacing: AppDimens.spacingSM,
-                runSpacing: AppDimens.spacingXS,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                alignment: WrapAlignment.spaceBetween,
-                children: [
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        width: 8,
-                        height: 8,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: statusColor,
-                          boxShadow: [
-                            if (isFocused)
-                              BoxShadow(
-                                color: statusColor.withValues(alpha: 0.4),
-                                blurRadius: 8,
-                                spreadRadius: 1,
+                        ),
+                        const SizedBox(width: AppDimens.spacingMD),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                statusText,
+                                style: AppTypography.titleMedium.copyWith(
+                                  color: statusColor,
+                                  fontWeight: FontWeight.w800,
+                                ),
                               ),
-                          ],
+                              const SizedBox(height: AppDimens.spacingXXS),
+                              Text(
+                                helperText,
+                                style: AppTypography.bodySmall.copyWith(
+                                  color: AppColors.textMuted,
+                                ),
+                              ),
+                              const SizedBox(height: AppDimens.spacingXS),
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Container(
+                                    width: 8,
+                                    height: 8,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: isActive
+                                          ? AppColors.success
+                                          : AppColors.textMuted
+                                              .withValues(alpha: 0.5),
+                                    ),
+                                  ),
+                                  const SizedBox(width: AppDimens.spacingXS),
+                                  Text(
+                                    isActive ? 'Scanner Ready' : 'Typing Mode',
+                                    style: AppTypography.labelMedium.copyWith(
+                                      color: isActive
+                                          ? AppColors.success
+                                          : AppColors.textMuted,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              if (value.text.isNotEmpty) ...[
+                                const SizedBox(height: AppDimens.spacingXS),
+                                Text(
+                                  value.text,
+                                  style: AppTypography.labelMedium.copyWith(
+                                    color: AppColors.textSecondary,
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
                         ),
-                      ),
-                      const SizedBox(width: AppDimens.spacingSM),
-                      Text(
-                        statusText,
-                        style: AppTypography.labelMedium.copyWith(
-                          color: statusColor,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ],
-                  ),
-                  SizedBox(
-                    width: isCompact ? double.infinity : null,
-                    child: Text(
-                      helperText,
-                      textAlign: isCompact ? TextAlign.left : TextAlign.right,
-                      style: AppTypography.bodySmall.copyWith(
-                        color: AppColors.textMuted,
-                      ),
+                        if (isProcessing || isOpeningCamera)
+                          const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: AppColors.accent,
+                            ),
+                          )
+                        else ...[
+                          if (value.text.isNotEmpty)
+                            IconButton(
+                              icon: const Icon(
+                                Icons.close_rounded,
+                                size: 18,
+                                color: AppColors.textMuted,
+                              ),
+                              onPressed: onClear,
+                            ),
+                          if (canOpenCamera)
+                            IconButton(
+                              icon: const Icon(
+                                Icons.camera_alt_outlined,
+                                size: 18,
+                                color: AppColors.textSecondary,
+                              ),
+                              onPressed: onOpenCamera,
+                            ),
+                        ],
+                      ],
                     ),
                   ),
-                ],
-              ),
-            ],
+                ),
+                const SizedBox(height: AppDimens.spacingSM),
+                Row(
+                  children: [
+                    Container(
+                      width: 8,
+                      height: 8,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: statusColor,
+                        boxShadow: [
+                          if (isFocused)
+                            BoxShadow(
+                              color: statusColor.withValues(alpha: 0.4),
+                              blurRadius: 8,
+                              spreadRadius: 1,
+                            ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: AppDimens.spacingSM),
+                    Text(
+                      statusText,
+                      style: AppTypography.labelMedium.copyWith(
+                        color: statusColor,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(width: AppDimens.spacingSM),
+                    Expanded(
+                      child: Text(
+                        helperText,
+                        textAlign: TextAlign.right,
+                        style: AppTypography.bodySmall.copyWith(
+                          color: AppColors.textMuted,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         );
       },
@@ -1948,14 +2095,12 @@ class _SearchField extends StatelessWidget {
   final TextEditingController controller;
   final FocusNode focusNode;
   final bool enabled;
-  final VoidCallback onDone;
   final void Function(String) onChanged;
 
   const _SearchField({
     required this.controller,
     required this.focusNode,
     required this.enabled,
-    required this.onDone,
     required this.onChanged,
   });
 
@@ -1968,9 +2113,6 @@ class _SearchField extends StatelessWidget {
           controller: controller,
           focusNode: focusNode,
           enabled: enabled,
-          textInputAction: TextInputAction.search,
-          onSubmitted: (_) => onDone(),
-          onTapOutside: (_) => onDone(),
           onChanged: onChanged,
           style: AppTypography.bodyLarge.copyWith(
             color: enabled ? AppColors.textPrimary : AppColors.textMuted,
@@ -1979,7 +2121,7 @@ class _SearchField extends StatelessWidget {
           decoration: InputDecoration(
             hintText: enabled
                 ? AppStrings.searchProducts
-                : 'Select class to search products',
+                : 'Loading school inventory',
             hintStyle:
                 AppTypography.bodyMedium.copyWith(color: AppColors.textMuted),
             prefixIcon: const Padding(
@@ -2307,115 +2449,6 @@ class _TopBarAction extends StatelessWidget {
               ),
             ),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ScannerStatusBadge extends StatelessWidget {
-  final bool isReady;
-  final bool compact;
-
-  const _ScannerStatusBadge({
-    required this.isReady,
-    required this.compact,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppDimens.spacingMD,
-        vertical: AppDimens.spacingSM,
-      ),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(AppDimens.radiusSM),
-        border: Border.all(
-          color: isReady ? AppColors.success : AppColors.warning,
-        ),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 8,
-            height: 8,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: isReady ? AppColors.success : AppColors.warning,
-            ),
-          ),
-          const SizedBox(width: AppDimens.spacingSM),
-          Text(
-            compact
-                ? (isReady ? 'Ready' : 'Focus')
-                : (isReady
-                    ? 'Scanner Connected / Ready'
-                    : 'Scanner Restoring Focus'),
-            style: AppTypography.labelMedium.copyWith(
-              color: isReady ? AppColors.success : AppColors.warning,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ScannerToolsMenu extends StatelessWidget {
-  final VoidCallback onOpenCameraFallback;
-
-  const _ScannerToolsMenu({
-    required this.onOpenCameraFallback,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return PopupMenuButton<String>(
-      color: AppColors.surface,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(AppDimens.radiusMD),
-        side: const BorderSide(color: AppColors.border),
-      ),
-      onSelected: (value) {
-        if (value == 'camera_fallback') {
-          onOpenCameraFallback();
-        }
-      },
-      itemBuilder: (_) => [
-        PopupMenuItem(
-          value: 'camera_fallback',
-          child: Row(
-            children: [
-              const Icon(
-                Icons.camera_alt_outlined,
-                size: 16,
-                color: AppColors.textSecondary,
-              ),
-              const SizedBox(width: AppDimens.spacingSM),
-              Text(
-                'Open Camera Fallback',
-                style: AppTypography.bodyMedium.copyWith(
-                  color: AppColors.textPrimary,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-      child: Container(
-        padding: const EdgeInsets.all(AppDimens.spacingSM),
-        decoration: BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: BorderRadius.circular(AppDimens.radiusSM),
-          border: Border.all(color: AppColors.border),
-        ),
-        child: const Icon(
-          Icons.tune_rounded,
-          size: 18,
-          color: AppColors.textSecondary,
         ),
       ),
     );

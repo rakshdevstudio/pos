@@ -8,6 +8,7 @@ import '../../core/providers/providers.dart';
 import '../../domain/models/models.dart';
 import '../../services/cart_service.dart';
 import '../shared/widgets/sync_status_badge.dart';
+import '../shared/widgets/illume_logo.dart';
 
 final _schoolsProvider = FutureProvider<List<School>>((ref) async {
   return ref.read(schoolRepoProvider).fetchSchools();
@@ -115,18 +116,15 @@ class SchoolSelectionScreen extends ConsumerWidget {
       backgroundColor: AppColors.background,
       appBar: AppBar(
         backgroundColor: AppColors.background,
-        leading: Padding(
-          padding: const EdgeInsets.all(AppDimens.spacingMD),
-          child: Text(
-            AppStrings.brandName,
-            style: AppTypography.titleLarge.copyWith(
-              color: AppColors.accent,
-              letterSpacing: 4,
-              fontWeight: FontWeight.w300,
-            ),
+        elevation: 0,
+        leading: const SizedBox(
+          width: 80,
+          height: kToolbarHeight,
+          child: Center(
+            child: LogoIcon(size: 40),
           ),
         ),
-        leadingWidth: 120,
+        leadingWidth: 80,
         actions: const [
           SyncStatusBadge(),
           SizedBox(width: AppDimens.spacingLG),

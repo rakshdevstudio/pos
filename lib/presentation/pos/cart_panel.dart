@@ -7,6 +7,7 @@ import '../../core/providers/providers.dart';
 import '../../domain/models/models.dart';
 import '../../services/cart_service.dart';
 import '../shared/widgets/illume_button.dart';
+import '../shared/widgets/illume_logo.dart';
 import '../checkout/customer_details_sheet.dart';
 import '../checkout/checkout_sheet.dart';
 import 'numpad_sheet.dart';
@@ -79,7 +80,15 @@ class _CartPanelState extends ConsumerState<CartPanel> {
               ),
             ),
             child: Row(
+              mainAxisSize: MainAxisSize.max,
+              mainAxisAlignment: MainAxisAlignment.start,
               children: [
+                const SizedBox(
+                  width: 32,
+                  height: 32,
+                  child: LogoIcon(size: 28),
+                ),
+                const SizedBox(width: AppDimens.spacingMD),
                 Text(
                   AppStrings.cart,
                   style: AppTypography.headlineSmall.copyWith(

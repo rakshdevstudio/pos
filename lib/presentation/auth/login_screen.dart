@@ -5,6 +5,7 @@ import '../../core/constants/constants.dart';
 import '../../data/remote/api_client.dart';
 import '../shared/widgets/illume_button.dart';
 import '../shared/widgets/illume_text_field.dart';
+import '../shared/widgets/illume_logo.dart';
 
 final _loginLoadingProvider = StateProvider<bool>((ref) => false);
 final _loginErrorProvider = StateProvider<String?>((ref) => null);
@@ -122,21 +123,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                           Center(
                             child: Column(
                               children: [
-                                Container(
-                                  width: 64,
-                                  height: 64,
-                                  decoration: BoxDecoration(
-                                    color: AppColors.surface,
-                                    borderRadius: BorderRadius.circular(
-                                        AppDimens.radiusLG),
-                                    border: Border.all(color: AppColors.border),
-                                  ),
-                                  child: const Icon(
-                                    Icons.diamond_outlined,
-                                    color: AppColors.accent,
-                                    size: 32,
-                                  ),
-                                ),
+                                const LogoIcon(size: 64, shadow: true),
                                 const SizedBox(height: AppDimens.spacingLG),
                                 Text(
                                   AppStrings.brandName,
