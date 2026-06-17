@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 
 import '../../core/constants/constants.dart';
 import '../../core/providers/providers.dart';
@@ -78,6 +79,8 @@ class _CheckoutSheetState extends ConsumerState<CheckoutSheet> {
   }
 
   Future<void> _placeOrder() async {
+    debugPrint('POS_CHECKOUT_STARTED');
+    debugPrint('CUSTOMER OBJECT: ${widget.customer.toJson()}');
     final cart = ref.read(cartProvider);
     final paymentMethod = _selectedPayment;
     if (paymentMethod == null) {
@@ -194,6 +197,10 @@ class _CheckoutSheetState extends ConsumerState<CheckoutSheet> {
         throw StateError('School selection is missing');
       }
 
+      final connectivityResult = await Connectivity().checkConnectivity();
+      final hasInternet = connectivityResult.any((r) => r != ConnectivityResult.none);
+      final initialSource = hasInternet ? 'pos' : 'offline_pos';
+
       pendingOrder = Order(
         offlineId: const Uuid().v4(),
         customer: widget.customer,
@@ -212,6 +219,7 @@ class _CheckoutSheetState extends ConsumerState<CheckoutSheet> {
           ),
           'branch_id': branchId,
           'school_name': schoolName,
+          'source': initialSource,
         },
         createdAt: DateTime.now(),
       );
@@ -245,8 +253,8 @@ class _CheckoutSheetState extends ConsumerState<CheckoutSheet> {
               _trimToNull(widget.customer.studentClass),
           className: _trimToNull(widget.customer.className) ??
               _trimToNull(widget.customer.studentClass),
-          source: 'pos',
-          orderChannel: 'offline',
+          source: initialSource,
+          orderChannel: 'pos',
           customerType: 'walk_in',
           status: 'Placed',
           orderId: pendingOrder.offlineId,

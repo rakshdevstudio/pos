@@ -98,6 +98,7 @@ class OrderRepositoryImpl implements OrderRepository {
     String? status,
     String? orderId,
   }) async {
+    debugPrint('applyInventoryMovements() CALLED (POS Checkout Path)');
     if (items.isEmpty) {
       throw StateError('Cannot place POS order with no items');
     }
@@ -132,10 +133,15 @@ class OrderRepositoryImpl implements OrderRepository {
       paymentMethod: paymentMethod,
       paymentBreakdown: resolvedPaymentBreakdown,
       status: status,
+      source: source,
+      channel: orderChannel ?? 'pos',
     );
 
     debugPrint('POS FINAL ORDER PAYLOAD:');
     debugPrint('$payload');
+    debugPrint('ORDER SOURCE: ${payload['source']}');
+    debugPrint('CUSTOMER: ${payload['customer_name']}');
+    debugPrint('CREATED FROM: POS Checkout Flow');
 
     final orderRes = await _insertOrderWithSchemaFallback(payload);
 
@@ -248,6 +254,8 @@ class OrderRepositoryImpl implements OrderRepository {
     String? grade,
     String? className,
     String? status,
+    String? source,
+    String? channel,
   }) {
     final now = DateTime.now().toIso8601String();
     final normalizedStudentClass = _normalizeStudentClass(
@@ -272,6 +280,8 @@ class OrderRepositoryImpl implements OrderRepository {
         paymentBreakdown,
       ),
       'status': _normalizeRemoteStatus(status),
+      'source': _normalizeRemoteSource(source),
+      'channel': channel ?? 'pos',
       'created_at': now,
       'updated_at': now,
     }..removeWhere((_, value) => value == null);
@@ -300,6 +310,14 @@ class OrderRepositoryImpl implements OrderRepository {
     final normalized = status?.trim().toUpperCase();
     if (normalized == null || normalized.isEmpty) {
       return 'PLACED';
+    }
+    return normalized;
+  }
+
+  String _normalizeRemoteSource(String? source) {
+    final normalized = source?.trim().toLowerCase();
+    if (normalized == null || normalized.isEmpty) {
+      return 'pos';
     }
     return normalized;
   }
@@ -408,6 +426,17 @@ class OrderRepositoryImpl implements OrderRepository {
   ) async {
     final mutablePayload = Map<String, dynamic>.from(payload)
       ..removeWhere((_, value) => value == null);
+
+    // Immediate overwrite before Supabase insert to prevent any upstream overrides
+    mutablePayload['created_from'] = 'pos_app';
+    mutablePayload['channel'] = 'pos';
+    final existingSource = mutablePayload['source']?.toString();
+    if (existingSource != 'offline_pos') {
+      mutablePayload['source'] = 'pos';
+    }
+
+    debugPrint('SUPABASE FINAL JSON BEFORE INSERT:');
+    debugPrint(jsonEncode(mutablePayload));
 
     while (true) {
       try {
@@ -760,6 +789,8 @@ class OrderRepositoryImpl implements OrderRepository {
       paymentMethod: paymentMethod,
       paymentBreakdown: paymentBreakdown,
       status: 'PLACED',
+      source: metadata['source']?.toString(),
+      channel: 'pos',
     );
 
     final orderRes = await _insertOrderWithSchemaFallback(payload);
