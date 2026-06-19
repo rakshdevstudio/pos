@@ -19,8 +19,13 @@ final _currencyFmt = NumberFormat('#,##0', 'en_IN');
 
 class CheckoutSheet extends ConsumerStatefulWidget {
   final CustomerInfo customer;
+  final FocusNode? scannerFocusNode;
 
-  const CheckoutSheet({super.key, required this.customer});
+  const CheckoutSheet({
+    super.key,
+    required this.customer,
+    this.scannerFocusNode,
+  });
 
   @override
   ConsumerState<CheckoutSheet> createState() => _CheckoutSheetState();
@@ -478,6 +483,14 @@ class _CheckoutSheetState extends ConsumerState<CheckoutSheet> {
                   keyboardType: const TextInputType.numberWithOptions(
                     decimal: true,
                   ),
+                  onTapOutside: (_) {
+                    FocusManager.instance.primaryFocus?.unfocus();
+                    widget.scannerFocusNode?.requestFocus();
+                  },
+                  onEditingComplete: () {
+                    FocusManager.instance.primaryFocus?.unfocus();
+                    widget.scannerFocusNode?.requestFocus();
+                  },
                   decoration: InputDecoration(
                     labelText: 'Discount value',
                     suffixText: _isPercentDiscount ? '%' : '₹',
@@ -596,6 +609,7 @@ class _CheckoutSheetState extends ConsumerState<CheckoutSheet> {
             label: 'Cash',
             icon: Icons.payments_outlined,
             onChanged: (_) => setState(() {}),
+            scannerFocusNode: widget.scannerFocusNode,
           ),
           const SizedBox(height: AppDimens.spacingMD),
           _PaymentAmountField(
@@ -603,6 +617,7 @@ class _CheckoutSheetState extends ConsumerState<CheckoutSheet> {
             label: 'UPI',
             icon: Icons.qr_code_rounded,
             onChanged: (_) => setState(() {}),
+            scannerFocusNode: widget.scannerFocusNode,
           ),
           const SizedBox(height: AppDimens.spacingMD),
           _PaymentAmountField(
@@ -610,6 +625,7 @@ class _CheckoutSheetState extends ConsumerState<CheckoutSheet> {
             label: 'Card',
             icon: Icons.credit_card_rounded,
             onChanged: (_) => setState(() {}),
+            scannerFocusNode: widget.scannerFocusNode,
           ),
           const SizedBox(height: AppDimens.spacingMD),
           Row(
@@ -767,12 +783,14 @@ class _PaymentAmountField extends StatelessWidget {
   final String label;
   final IconData icon;
   final ValueChanged<String> onChanged;
+  final FocusNode? scannerFocusNode;
 
   const _PaymentAmountField({
     required this.controller,
     required this.label,
     required this.icon,
     required this.onChanged,
+    this.scannerFocusNode,
   });
 
   @override
@@ -781,6 +799,14 @@ class _PaymentAmountField extends StatelessWidget {
       controller: controller,
       keyboardType: const TextInputType.numberWithOptions(decimal: true),
       onChanged: onChanged,
+      onTapOutside: (_) {
+        FocusManager.instance.primaryFocus?.unfocus();
+        scannerFocusNode?.requestFocus();
+      },
+      onEditingComplete: () {
+        FocusManager.instance.primaryFocus?.unfocus();
+        scannerFocusNode?.requestFocus();
+      },
       decoration: InputDecoration(
         labelText: '$label amount',
         prefixIcon: Icon(icon),

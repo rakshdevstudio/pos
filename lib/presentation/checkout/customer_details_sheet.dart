@@ -8,7 +8,8 @@ import '../../domain/models/customer_info.dart';
 import '../shared/widgets/illume_button.dart';
 
 class CustomerDetailsSheet extends ConsumerStatefulWidget {
-  const CustomerDetailsSheet({super.key});
+  final FocusNode? scannerFocusNode;
+  const CustomerDetailsSheet({super.key, this.scannerFocusNode});
 
   @override
   ConsumerState<CustomerDetailsSheet> createState() =>
@@ -165,6 +166,20 @@ class _CustomerDetailsSheetState extends ConsumerState<CustomerDetailsSheet> {
                   TextFormField(
                     controller: _phoneController,
                     keyboardType: TextInputType.phone,
+                    onTapOutside: (_) {
+                      FocusManager.instance.primaryFocus?.unfocus();
+                      widget.scannerFocusNode?.requestFocus();
+                      debugPrint("SCANNER FOCUS RESTORED");
+                    },
+                    onEditingComplete: () {
+                      FocusManager.instance.primaryFocus?.unfocus();
+                      widget.scannerFocusNode?.requestFocus();
+                      debugPrint("SCANNER FOCUS RESTORED");
+                    },
+                    onFieldSubmitted: (_) {
+                      widget.scannerFocusNode?.requestFocus();
+                      debugPrint("SCANNER FOCUS RESTORED");
+                    },
                     decoration: InputDecoration(
                       labelText: 'Phone Number',
                       prefixIcon: const Icon(Icons.phone_android_rounded),
@@ -215,6 +230,21 @@ class _CustomerDetailsSheetState extends ConsumerState<CustomerDetailsSheet> {
 
               TextFormField(
                 controller: _nameController,
+                textCapitalization: TextCapitalization.words,
+                onTapOutside: (_) {
+                  FocusManager.instance.primaryFocus?.unfocus();
+                  widget.scannerFocusNode?.requestFocus();
+                  debugPrint("SCANNER FOCUS RESTORED");
+                },
+                onEditingComplete: () {
+                  FocusManager.instance.primaryFocus?.unfocus();
+                  widget.scannerFocusNode?.requestFocus();
+                  debugPrint("SCANNER FOCUS RESTORED");
+                },
+                onFieldSubmitted: (_) {
+                  widget.scannerFocusNode?.requestFocus();
+                  debugPrint("SCANNER FOCUS RESTORED");
+                },
                 decoration: const InputDecoration(
                   labelText: 'Customer Name (Optional)',
                   prefixIcon: Icon(Icons.badge_outlined),
@@ -224,6 +254,21 @@ class _CustomerDetailsSheetState extends ConsumerState<CustomerDetailsSheet> {
 
               TextFormField(
                 controller: _studentNameController,
+                textCapitalization: TextCapitalization.words,
+                onTapOutside: (_) {
+                  FocusManager.instance.primaryFocus?.unfocus();
+                  widget.scannerFocusNode?.requestFocus();
+                  debugPrint("SCANNER FOCUS RESTORED");
+                },
+                onEditingComplete: () {
+                  FocusManager.instance.primaryFocus?.unfocus();
+                  widget.scannerFocusNode?.requestFocus();
+                  debugPrint("SCANNER FOCUS RESTORED");
+                },
+                onFieldSubmitted: (_) {
+                  widget.scannerFocusNode?.requestFocus();
+                  debugPrint("SCANNER FOCUS RESTORED");
+                },
                 decoration: const InputDecoration(
                   labelText: 'Student Name (Optional)',
                   prefixIcon: Icon(Icons.person_outline_rounded),
@@ -246,6 +291,21 @@ class _CustomerDetailsSheetState extends ConsumerState<CustomerDetailsSheet> {
 
               TextFormField(
                 controller: _addressController,
+                textCapitalization: TextCapitalization.words,
+                onTapOutside: (_) {
+                  FocusManager.instance.primaryFocus?.unfocus();
+                  widget.scannerFocusNode?.requestFocus();
+                  debugPrint("SCANNER FOCUS RESTORED");
+                },
+                onEditingComplete: () {
+                  FocusManager.instance.primaryFocus?.unfocus();
+                  widget.scannerFocusNode?.requestFocus();
+                  debugPrint("SCANNER FOCUS RESTORED");
+                },
+                onFieldSubmitted: (_) {
+                  widget.scannerFocusNode?.requestFocus();
+                  debugPrint("SCANNER FOCUS RESTORED");
+                },
                 decoration: const InputDecoration(
                   labelText: 'Address (Optional)',
                   prefixIcon: Icon(Icons.location_on_outlined),

@@ -4,6 +4,7 @@ class Variant {
   final String name;
   final String? sku;
   final String? barcode;
+  final String? barcodeValue;
   final List<String> classIds;
   final double price;
   final int stock;
@@ -22,6 +23,7 @@ class Variant {
     required this.name,
     this.sku,
     this.barcode,
+    this.barcodeValue,
     this.classIds = const [],
     required this.price,
     this.stock = 0,
@@ -40,6 +42,9 @@ class Variant {
       sku: _asNullableString(json['sku']),
       barcode: _asNullableString(
         json['barcode'] ?? json['barcode_value'] ?? json['sku'],
+      ),
+      barcodeValue: _asNullableString(
+        json['barcode_value'] ?? json['barcode'] ?? json['sku'],
       ),
       classIds: _extractClassIds(json),
       price: (json['price'] as num).toDouble(),
@@ -61,6 +66,7 @@ class Variant {
       name: name,
       sku: sku,
       barcode: barcode,
+      barcodeValue: barcodeValue,
       classIds: classIds ?? this.classIds,
       price: price,
       stock: stock ?? this.stock,

@@ -67,9 +67,17 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   bool _isOpeningCameraScanner = false;
   List<HeldBillDraft> _draftBills = const [];
 
+  late final TextEditingController hiddenScannerController;
+  late final FocusNode scannerFocusNode;
+
   @override
   void initState() {
     super.initState();
+    hiddenScannerController = TextEditingController();
+    scannerFocusNode = FocusNode();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      scannerFocusNode.requestFocus();
+    });
     _barcodeFocus.addListener(_handleBarcodeFocusChanged);
     _searchFocus.addListener(_handleSearchFocusChanged);
     unawaited(_loadDraftBills());
@@ -109,11 +117,13 @@ class _PosScreenState extends ConsumerState<PosScreen> {
         _isScannerActive = false;
       });
       _barcodeFocus.unfocus();
+      debugPrint("TEXT FIELD FOCUS ACTIVE");
     } else {
       setState(() {
         _isScannerActive = true;
       });
-      _focusBarcodeField();
+      scannerFocusNode.requestFocus();
+      debugPrint("SCANNER FOCUS RESTORED");
     }
   }
 
@@ -317,11 +327,12 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   }
 
   void _resumeScannerFocus() {
-    if (_shouldMaintainScannerFocus && mounted) {
+    if (mounted) {
       setState(() {
         _isScannerActive = true;
       });
-      _focusBarcodeField(force: true);
+      scannerFocusNode.requestFocus();
+      debugPrint("SCANNER FOCUS RESTORED");
     }
   }
 
@@ -340,7 +351,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => const CustomerDetailsSheet(),
+      builder: (_) => CustomerDetailsSheet(scannerFocusNode: scannerFocusNode),
     );
 
     if (customer != null && mounted) {
@@ -348,7 +359,10 @@ class _PosScreenState extends ConsumerState<PosScreen> {
         context: context,
         isScrollControlled: true,
         backgroundColor: Colors.transparent,
-        builder: (_) => CheckoutSheet(customer: customer),
+        builder: (_) => CheckoutSheet(
+          customer: customer,
+          scannerFocusNode: scannerFocusNode,
+        ),
       );
       _resumeScannerFocus();
       return;
@@ -577,6 +591,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   }
 
   void _handleBarcodeSubmit(String rawCode) {
+    debugPrint("HANDLE BARCODE RECEIVED: $rawCode");
     final normalizedCode =
         ref.read(barcodeLookupServiceProvider).normalizeBarcode(rawCode);
     if (normalizedCode == null) {
@@ -665,11 +680,16 @@ class _PosScreenState extends ConsumerState<PosScreen> {
         return;
       }
 
+      debugPrint('PRODUCT FOUND: ${match.product.name} - ${match.variant.name}');
       final addResult = ref
           .read(cartProvider.notifier)
           .addItemWithResult(match.product, match.variant);
       switch (addResult) {
         case CartAddResult.added:
+          if (mounted) {
+            scannerFocusNode.requestFocus();
+            debugPrint("SCANNER FOCUS RESTORED");
+          }
           HapticFeedback.lightImpact();
           unawaited(SystemSound.play(SystemSoundType.click));
           _showBarcodeSnackBar(
@@ -904,6 +924,8 @@ class _PosScreenState extends ConsumerState<PosScreen> {
 
   @override
   void dispose() {
+    hiddenScannerController.dispose();
+    scannerFocusNode.dispose();
     _searchController.dispose();
     _searchFocus.removeListener(_handleSearchFocusChanged);
     _searchFocus.dispose();
@@ -937,11 +959,39 @@ class _PosScreenState extends ConsumerState<PosScreen> {
         child: Scaffold(
           backgroundColor: AppColors.background,
           resizeToAvoidBottomInset: false,
-          body: _schoolId == null
-              ? const Center(
-                  child: CircularProgressIndicator(color: AppColors.accent),
-                )
-              : _buildPosLayout(),
+          body: Stack(
+            children: [
+              // Main content
+              _schoolId == null
+                  ? const Center(
+                      child: CircularProgressIndicator(color: AppColors.accent),
+                    )
+                  : _buildPosLayout(),
+              // Hidden scanner field positioned at 0,0 so it remains focusable
+              Positioned(
+                top: 0,
+                left: 0,
+                width: 1,
+                height: 1,
+                child: Opacity(
+                  opacity: 0,
+                  child: TextField(
+                    controller: hiddenScannerController,
+                    focusNode: scannerFocusNode,
+                    autofocus: true,
+                    keyboardType: TextInputType.none,
+                    onSubmitted: (value) {
+                      debugPrint("HIDDEN SCANNER SUBMIT: $value");
+                      _handleBarcodeSubmit(value);
+                      hiddenScannerController.clear();
+                      scannerFocusNode.requestFocus();
+                      debugPrint("SCANNER FOCUS RESTORED");
+                    },
+                  ),
+                ),
+              ),
+            ],
+          ),
           bottomNavigationBar: _isCompactLayout(context)
               ? _MobileCartSummaryBar(
                   controller: _mobileScrollController,
@@ -1293,7 +1343,10 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       statusText: _scannerStatusText,
       helperText: _scannerHelperText,
       statusColor: _scannerStatusColor,
-      onSubmitted: _handleBarcodeSubmit,
+      onSubmitted: (value) {
+        debugPrint("VISIBLE SEARCH SUBMIT: $value");
+        _handleBarcodeSubmit(value);
+      },
       onOpenCamera: _openCameraScanner,
       isOpeningCamera: _isOpeningCameraScanner,
       canOpenCamera: !_shouldMaintainScannerFocus || _isCompactLayout(context),
@@ -2114,6 +2167,12 @@ class _SearchField extends StatelessWidget {
           focusNode: focusNode,
           enabled: enabled,
           onChanged: onChanged,
+          onEditingComplete: () {
+            FocusManager.instance.primaryFocus?.unfocus();
+          },
+          onTapOutside: (_) {
+            FocusManager.instance.primaryFocus?.unfocus();
+          },
           style: AppTypography.bodyLarge.copyWith(
             color: enabled ? AppColors.textPrimary : AppColors.textMuted,
           ),

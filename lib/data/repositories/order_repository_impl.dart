@@ -261,14 +261,19 @@ class OrderRepositoryImpl implements OrderRepository {
     final normalizedStudentClass = _normalizeStudentClass(
       className ?? grade,
     );
+    
+    final trimmedCustomerName = _trimToNull(customerName);
+    final isWalkIn = trimmedCustomerName == null || trimmedCustomerName.toLowerCase() == 'walk-in customer';
+
     return <String, dynamic>{
       'school_id': schoolId.trim(),
       'branch_id': _trimToNull(branchId),
-      'customer_name': _trimToNull(customerName) ?? 'Walk-in Customer',
+      'customer_name': isWalkIn ? 'Walk-in Customer' : trimmedCustomerName,
+      'customer_type': isWalkIn ? 'walk_in' : 'pos_customer',
       'phone': _trimToNull(customerPhone),
       'alternate_phone': _trimToNull(alternatePhone),
       'email': _trimToNull(customerEmail),
-      'address': _trimToNull(customerAddress) ?? '-',
+      'address': _trimToNull(customerAddress) ?? (isWalkIn ? null : '-'),
       'city': _trimToNull(city),
       'pincode': _trimToNull(pincode),
       'student_name': _trimToNull(studentName),
@@ -279,8 +284,11 @@ class OrderRepositoryImpl implements OrderRepository {
         paymentMethod,
         paymentBreakdown,
       ),
+      'payment_method': paymentMethod.name,
+      'payment_status': 'paid',
       'status': _normalizeRemoteStatus(status),
       'source': _normalizeRemoteSource(source),
+      'order_source': _normalizeRemoteSource(source),
       'channel': channel ?? 'pos',
       'created_at': now,
       'updated_at': now,
@@ -435,7 +443,7 @@ class OrderRepositoryImpl implements OrderRepository {
       mutablePayload['source'] = 'pos';
     }
 
-    debugPrint('SUPABASE FINAL JSON BEFORE INSERT:');
+    debugPrint('POS ORDER PAYLOAD:');
     debugPrint(jsonEncode(mutablePayload));
 
     while (true) {
@@ -447,6 +455,11 @@ class OrderRepositoryImpl implements OrderRepository {
             .single();
         return inserted;
       } on PostgrestException catch (e) {
+        debugPrint('SUPABASE ORDER ERROR:');
+        debugPrint('CODE: ${e.code}');
+        debugPrint('MESSAGE: ${e.message}');
+        debugPrint('DETAILS: ${e.details}');
+        
         final missingColumn = _extractMissingOrdersColumn(e.message);
         if (missingColumn == null ||
             !mutablePayload.containsKey(missingColumn)) {

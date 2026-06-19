@@ -207,14 +207,31 @@ class ProductRepositoryImpl implements ProductRepository {
     _productCache[cacheKey] = products;
     _cachedAt[cacheKey] = DateTime.now();
 
+    int totalVariants = 0;
+    Variant? firstVariant;
+    Product? firstProduct;
+
     for (final product in products) {
       for (final v in product.variants) {
+        if (firstVariant == null) {
+          firstVariant = v;
+          firstProduct = product;
+        }
+        totalVariants++;
         _cacheVariantLookup(
           schoolId: schoolId,
           product: product,
           variant: v,
         );
       }
+    }
+
+    debugPrint('TOTAL VARIANTS LOADED: $totalVariants');
+    if (firstVariant != null && firstProduct != null) {
+      debugPrint('FIRST VARIANT:');
+      debugPrint('ID: ${firstVariant.id}');
+      debugPrint('NAME: ${firstProduct.name} - ${firstVariant.name}');
+      debugPrint('BARCODE_VALUE: ${firstVariant.barcodeValue}');
     }
   }
 
@@ -251,6 +268,9 @@ class ProductRepositoryImpl implements ProductRepository {
     if (scopedSchoolId.isEmpty || normalizedBarcode == null) {
       return null;
     }
+    
+    debugPrint('SCANNED CODE: $barcode');
+    debugPrint('MATCHING AGAINST: $normalizedBarcode');
 
     final cached =
         _barcodeMatchCache[_barcodeKey(scopedSchoolId, normalizedBarcode)];
@@ -529,6 +549,7 @@ class ProductRepositoryImpl implements ProductRepository {
   }) {
     final match = ProductBarcodeMatch(product: product, variant: variant);
     final values = <String?>{
+      variant.barcodeValue,
       variant.barcode,
       variant.sku,
     };

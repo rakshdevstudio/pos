@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -26,7 +27,7 @@ void main() async {
   // Init secure storage base URL cache (sync, avoids per-request async)
   await ApiClient.initBaseUrl();
 
-  if (Platform.isAndroid) {
+  if (!kIsWeb && Platform.isAndroid) {
     HttpOverrides.global = ResilientHttpOverrides();
   }
 

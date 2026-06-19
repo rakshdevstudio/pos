@@ -23,7 +23,8 @@ class BarcodeLookupService {
   }
 
   String? normalizeBarcode(String code) {
-    final normalized = code.replaceAll(RegExp(r'[\r\n\t]+'), ' ').trim();
+    var normalized = code.replaceAll(RegExp(r'[\r\n\t\u200B\u200C\u200D\uFEFF]+'), '');
+    normalized = normalized.trim();
     if (normalized.isEmpty) {
       return null;
     }
